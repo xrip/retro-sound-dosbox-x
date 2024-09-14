@@ -35,7 +35,7 @@
 #include "mame/emu.h"
 #include "mame/sn76496.h"
 
-
+extern void Enqueue(uint16_t message);
 #define SOUND_CLOCK (14318180 / 4)
 
 #define TDAC_DMA_BUFSIZE 1024
@@ -72,6 +72,7 @@ static sn76496_base_device* activeDevice = &device_ncr8496;
 #define device (*activeDevice)
 
 static void SN76496Write(Bitu /*port*/,Bitu data,Bitu /*iolen*/) {
+    Enqueue((data & 0xff) << 8 | 0);
 	tandy.last_write=PIC_Ticks;
 	if (!tandy.enabled) {
 		tandy.chan->Enable(true);

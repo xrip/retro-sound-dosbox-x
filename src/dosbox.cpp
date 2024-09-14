@@ -87,6 +87,9 @@
 #ifdef WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <synchapi.h>
+
+HANDLE hComm;
 #endif
 
 #include <list>
@@ -1091,7 +1094,176 @@ void SetIME() {
 #endif
 }
 
+#ifdef WIN32
+#define QUEUE_SIZE 100
+
+typedef struct {
+    uint16_t messages[QUEUE_SIZE];
+    int front;
+    int rear;
+    int count;
+    CRITICAL_SECTION cs;
+    CONDITION_VARIABLE cvNotEmpty;
+    CONDITION_VARIABLE cvNotFull;
+} MessageQueue;
+
+MessageQueue queue;
+HANDLE hThread;
+
+DWORD WINAPI MessageHandler(LPVOID lpParam);
+
+// Initialize the message queue
+void InitQueue(MessageQueue* q) {
+    q->front = 0;
+    q->rear = 0;
+    q->count = 0;
+    InitializeCriticalSection(&q->cs);
+    InitializeConditionVariable(&q->cvNotEmpty);
+    InitializeConditionVariable(&q->cvNotFull);
+}
+
+// Destroy the message queue
+void DestroyQueue(MessageQueue* q) {
+    DeleteCriticalSection(&q->cs);
+}
+
+
+void EnqueueInternal(MessageQueue* q, uint16_t message) {
+    EnterCriticalSection(&q->cs);
+
+    // Wait if the queue is full
+    while(q->count == QUEUE_SIZE) {
+        SleepConditionVariableCS(&q->cvNotFull, &q->cs, INFINITE);
+    }
+
+    q->messages[q->rear] = message;
+    q->rear = (q->rear + 1) % QUEUE_SIZE;
+    q->count++;
+
+    // Signal that the queue is not empty
+    WakeConditionVariable(&q->cvNotEmpty);
+
+    LeaveCriticalSection(&q->cs);
+}
+
+
+void Enqueue(uint16_t message) {
+    EnqueueInternal(&queue, message);
+}
+
+// Remove a message from the queue
+uint16_t Dequeue(MessageQueue* q) {
+    EnterCriticalSection(&q->cs);
+
+    // Wait if the queue is empty
+    while(q->count == 0) {
+        SleepConditionVariableCS(&q->cvNotEmpty, &q->cs, INFINITE);
+    }
+
+    uint16_t message = q->messages[q->front];
+    q->front = (q->front + 1) % QUEUE_SIZE;
+    q->count--;
+
+    // Signal that the queue is not full
+    WakeConditionVariable(&q->cvNotFull);
+
+    LeaveCriticalSection(&q->cs);
+
+    return message;
+}
+
+
+
+// Thread function to handle the message queue
+DWORD WINAPI MessageHandler(LPVOID lpParam) {
+    MessageQueue* q = (MessageQueue*)lpParam;
+    DWORD bytesWritten;
+
+    while(1) {
+        uint16_t message = Dequeue(q);
+
+        // Process the message (just print it for now)
+        if(hComm != NULL && !WriteFile(hComm, &message, 2, &bytesWritten, NULL)) {
+            LOG(LOG_MISC, LOG_DEBUG)("Erorr writting to serial port COM7\n");
+        }
+    }
+
+    return 0;
+}
+#endif
+
 void DOSBOX_RealInit() {
+#ifdef WIN32
+    DCB dcb;
+    if(hComm == NULL) {
+        // Open the serial port
+        hComm = CreateFile("\\\\.\\COM7",
+            GENERIC_WRITE | GENERIC_READ,
+            0,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL);
+
+
+        if(hComm == INVALID_HANDLE_VALUE) {
+            LOG(LOG_MISC, LOG_DEBUG)("Error opening serial port");
+        }
+        // Initialize the DCB structure
+        SecureZeroMemory(&dcb, sizeof(DCB));
+        dcb.DCBlength = sizeof(DCB);
+
+        Sleep(10);
+        // Get the current state
+        BOOL fSuccess = GetCommState(hComm, &dcb);
+        if(!fSuccess) {
+            // Handle the error
+            LOG(LOG_MISC, LOG_DEBUG)("Error in getting current serial port state");
+            CloseHandle(hComm);
+            //return 1;
+        }
+
+        // Set the new state
+        dcb.BaudRate = CBR_115200;    // set the baud rate
+        dcb.ByteSize = 8;           // data size, xmit, and rcv
+        dcb.Parity = NOPARITY;    // no parity bit
+        dcb.StopBits = ONESTOPBIT;  // one stop bit
+        dcb.fDtrControl = DTR_CONTROL_ENABLE;
+
+
+        fSuccess = SetCommState(hComm, &dcb);
+        if(!fSuccess) {
+            // Handle the error
+            LOG(LOG_MISC, LOG_DEBUG)("Error in setting serial port state");
+            CloseHandle(hComm);
+            //return 1;
+        }
+        COMMTIMEOUTS timeouts;
+        // Set the timeouts
+        timeouts.ReadIntervalTimeout = 5;
+        timeouts.ReadTotalTimeoutConstant = 5;
+        timeouts.ReadTotalTimeoutMultiplier = 1;
+        timeouts.WriteTotalTimeoutConstant = 5;
+        timeouts.WriteTotalTimeoutMultiplier = 1;
+        Sleep(10);
+        fSuccess = SetCommTimeouts(hComm, &timeouts);
+        if(!fSuccess) {
+            // Handle the error
+            LOG(LOG_MISC, LOG_DEBUG)("Error in setting timeouts");
+            CloseHandle(hComm);
+            //return 1;
+        }
+        Sleep(10);
+
+        // Initialize the message queue
+        InitQueue(&queue);
+
+        // Create the message handling thread
+        hThread = CreateThread(NULL, 0, MessageHandler, &queue, 0, NULL);
+        if(hThread == NULL) {
+            LOG(LOG_MISC, LOG_DEBUG)("Error creating sound thread");
+        }
+    }
     DOSBoxMenu::item *item;
 
     LOG(LOG_MISC,LOG_DEBUG)("DOSBOX-X RealInit: loading settings and initializing");
@@ -1350,6 +1522,9 @@ void DOSBOX_RealInit() {
     // switch to FM Towns will begin in the BOOT command with a flag to
     // indicate the ISO is intended for FM TOwns.
     if (IS_FM_TOWNS || want_fm_towns) LOG_MSG("FM Towns emulation not yet implemented. It's currently just a stub for future development.");
+
+
+#endif
 }
 
 void DOSBOX_SetupConfigSections(void) {

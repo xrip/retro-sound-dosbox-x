@@ -48,6 +48,7 @@ bool adlib_force_timer_overflow_on_polling = false;
 bool systemmessagebox(char const * aTitle, char const * aMessage, char const * aDialogType, char const * aIconType, int aDefaultButton);
 extern bool show_recorded_filename;
 extern std::string pathopl;
+extern void Enqueue(uint16_t message);
 
 namespace OPL2 {
 	#include "opl.cpp"
@@ -55,6 +56,8 @@ namespace OPL2 {
 	struct Handler : public Adlib::Handler {
 		void WriteReg( uint32_t reg, uint8_t val ) override {
 			adlib_write(reg,val);
+            Enqueue((reg & 0xff) << 8 | 2 << 4 | 0b0000 | (reg >> 8) & 1);
+            Enqueue((val & 0xff) << 8 | 2 << 4 | 0b0010 | (reg >> 8) & 1);
 		}
 		uint32_t WriteAddr( uint32_t port, uint8_t val ) override {
             (void)port;//UNUSED

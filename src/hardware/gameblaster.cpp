@@ -38,24 +38,37 @@ static MixerChannel * cms_chan;
 static uint32_t lastWriteTicks;
 static uint32_t cmsBase;
 static saa1099_device* device[2];
+extern void Enqueue(uint16_t message);
 
 static void write_cms(Bitu port, Bitu val, Bitu /* iolen */) {
-	if(cms_chan && (!cms_chan->enabled)) cms_chan->Enable(true);
-	lastWriteTicks = (uint32_t)PIC_Ticks;
-	switch ( port - cmsBase ) {
-	case 1:
-		device[0]->control_w(0, 0, (u8)val);
-		break;
-	case 0:
-		device[0]->data_w(0, 0, (u8)val);
-		break;
-	case 3:
-		device[1]->control_w(0, 0, (u8)val);
-		break;
-	case 2:
-		device[1]->data_w(0, 0, (u8)val);
-		break;
-	}
+    if(cms_chan && (!cms_chan->enabled)) cms_chan->Enable(true);
+    lastWriteTicks = (uint32_t)PIC_Ticks;
+    switch(port - cmsBase) {
+    case 1: {
+        Enqueue((val & 0xff) << 8 | 3 << 4 | 0b0010);
+
+        device[0]->control_w(0, 0, (u8)val);
+        break;
+    }
+    case 0: {
+        Enqueue((val & 0xff) << 8 | 3 << 4 | 0b0000);
+
+        device[0]->data_w(0, 0, (u8)val);
+        break;
+    }
+    case 3: {
+        Enqueue((val & 0xff) << 8 | 3 << 4 | 0b0011);
+
+        device[1]->control_w(0, 0, (u8)val);
+        break;
+    }
+    case 2: {
+        Enqueue((val & 0xff) << 8 | 3 << 4 | 0b0001);
+
+        device[1]->data_w(0, 0, (u8)val);
+        break;
+    }
+    }
 }
 
 static void CMS_CallBack(Bitu len) {
