@@ -194,6 +194,7 @@ bool                                pc98_crt_mode = false;      // see port 6Ah 
                                                                 // this boolean is the INVERSE of the bit.
 
 extern int                          vga_memio_delay_ns;
+extern bool                         vga_memio_lfb_delay;
 extern bool                         gdc_5mhz_mode;
 extern bool                         gdc_5mhz_mode_initial;
 extern bool                         enable_pc98_egc;
@@ -708,6 +709,8 @@ bool has_pcibus_enable(void);
 uint32_t MEM_get_address_bits();
 uint32_t GetReportedVideoMemorySize(void);
 
+static uint32_t assigned_lfb = 0;
+
 void VGA_Reset(Section*) {
 //  All non-PC98 video-related config settings are now in the [video] section
 
@@ -749,9 +752,9 @@ void VGA_Reset(Section*) {
         lfb_default = true;
     }
 
-    /* no farther than 32MB below the top */
-    if (S3_LFB_BASE > 0xFE000000UL)
-        S3_LFB_BASE = 0xFE000000UL;
+    /* no farther than 64MB below the top, do not overlap the BIOS */
+    if (S3_LFB_BASE > 0xFC000000UL)
+        S3_LFB_BASE = 0xFC000000UL;
 
     /* if the user WANTS the base address to be PCI misaligned, then turn off PCI VGA emulation */
     if (enable_pci_vga && has_pcibus_enable() && (S3_LFB_BASE & 0x1FFFFFFul)) {
@@ -768,20 +771,25 @@ void VGA_Reset(Section*) {
         enable_pci_vga = false;
     }
 
+    /* must not overlap system RAM or other devices */
+    if (S3_LFB_BASE < (MEM_TotalPages()*4096))
+        S3_LFB_BASE = (MEM_TotalPages()*4096);
+    if (S3_LFB_BASE < assigned_lfb)
+        S3_LFB_BASE = assigned_lfb;
+
     if (enable_pci_vga && has_pcibus_enable()) {
         /* must be 32MB aligned (PCI) */
-        S3_LFB_BASE +=  0x0FFFFFFUL;
+        S3_LFB_BASE +=  0x1FFFFFFUL;
         S3_LFB_BASE &= ~0x1FFFFFFUL;
     }
     else {
         /* must be 64KB aligned (ISA) */
-        S3_LFB_BASE +=  0x7FFFUL;
+        S3_LFB_BASE +=  0xFFFFUL;
         S3_LFB_BASE &= ~0xFFFFUL;
     }
 
-    /* must not overlap system RAM */
-    if (S3_LFB_BASE < (MEM_TotalPages()*4096))
-        S3_LFB_BASE = (MEM_TotalPages()*4096);
+    /* sanity check */
+    if (S3_LFB_BASE >= 0xFE000000UL) E_Exit("S3 LFB base 0x%lx would overlap BIOS",(unsigned long)S3_LFB_BASE);
 
     /* if the constraints we imposed make it impossible to maintain the alignment required for PCI,
      * then just switch off PCI VGA emulation. */
@@ -1032,6 +1040,8 @@ void VGA_Reset(Section*) {
     else if (vga_render_on_demand_user < 0)
         LOG_MSG("The 'scanline render on demand' option is available and may provide a modest boost in video render performance if set to true.");
 
+    vga_memio_lfb_delay = section->Get_bool("lfb vmemdelay");
+
     vga_memio_delay_ns = section->Get_int("vmemdelay");
     if (vga_memio_delay_ns < 0) {
         if (IS_EGAVGA_ARCH) {
@@ -1101,6 +1111,7 @@ void VGA_Reset(Section*) {
             vga.mem.memsize  = (vga.mem.memsize + 0xFFFu) & (~0xFFFu);
             /* mainline compatible: vmemsize == 0 means 512KB */
             if (vga.mem.memsize == 0) vga.mem.memsize = _KB_bytes(512);
+            vga.mem.memsize_original = vga.mem.memsize;
 
             /* round up to the nearest power of 2 (TODO: Any video hardware that uses non-power-of-2 sizes?).
              * A lot of DOSBox's VGA emulation code assumes power-of-2 VRAM sizes especially when wrapping
@@ -1111,6 +1122,7 @@ void VGA_Reset(Section*) {
             }
         }
         else {
+            vga.mem.memsize_original = 0;
             vga.mem.memsize = 0; /* machine-specific code will choose below */
         }
     }
@@ -1660,6 +1672,12 @@ void VGA_Init() {
     vga.tandy.mem_base = NULL;
     LOG(LOG_MISC,LOG_DEBUG)("Initializing VGA");
     LOG(LOG_MISC,LOG_DEBUG)("Render scaler maximum resolution is %u x %u",SCALER_MAXWIDTH,SCALER_MAXHEIGHT);
+
+    /* the purpose of this is so that, if everything is crammed up at the top to make room for system RAM, the S3 and 3Dfx do not conflict */
+    if (IS_VGA_ARCH && svgaCard != SVGA_None)
+        assigned_lfb = MEM_HardwareAllocate("VGA",32ul << 20ul/*32MB*/);
+    else
+	LOG(LOG_MISC,LOG_DEBUG)("Emulation does not require allocating or assigning any LFB");
 
     VGA_TweakUserVsyncOffset(0.0f);
 

@@ -1,6 +1,6 @@
 :DOSBOX-X:LANGUAGE:German
 :DOSBOX-X:CODEPAGE:858
-:DOSBOX-X:VERSION:2024.10.01
+:DOSBOX-X:VERSION:2025.01.01
 :DOSBOX-X:REMARK:
 :PROGRAM_BOOT_BOOTING
 Starte von Laufwerk 
@@ -1322,6 +1322,16 @@ Ein paar Beispiele für IMGMAKE:
   ←[32;1mIMGMAKE ~/disk.img -t hd_2gig -fat 32←[0m   - erstelle 2GB FAT32 HDD-Image
   ←[32;1mIMGMAKE ~/disk.img -t hd -chs 130,2,17←[0m  - erstelle HDD-Image mit dieser
                                             Geometrie
+
+.
+:PROGRAM_IMGMAKE_FLREAD
+Disk geometry: %d Cylinders, %d Heads, %d Sectors, %d Kilobytes
+
+
+.
+:PROGRAM_IMGMAKE_FLREAD2
+%s =good, %s =good after retries, ! =CRC error, x =sector not found, ? =unknown
+
 
 .
 :PROGRAM_IMGMAKE_FILE_EXISTS
@@ -2831,6 +2841,18 @@ Original-Verhältnis
 :MENU:video_ratio_set
 Setze Verhältnis
 .
+:MENU:VideoPreventCaptureMenu
+Screen capture control
+.
+:MENU:prevcap_none
+Allow
+.
+:MENU:prevcap_blank
+Show as blank
+.
+:MENU:prevcap_invisible
+Make invisible
+.
 :MENU:VideoScalerMenu
 Scaler
 .
@@ -2920,6 +2942,9 @@ xBRZ
 .
 :MENU:scaler_set_xbrz_bilinear
 xBRZ Bilinear
+.
+:MENU:center_window
+Center window
 .
 :MENU:set_titletext
 Setze Text in Titelleiste...
@@ -3137,6 +3162,9 @@ Interne Voodoo-Karte
 :MENU:3dfx_glide
 Glide-Passthrough
 .
+:MENU:load_d3d_shader
+Select Direct3D pixel shader...
+.
 :MENU:load_glsl_shader
 Wähle OpenGL (GLSL) Shader...
 .
@@ -3325,6 +3353,9 @@ Zur letzten Seite
 .
 :MENU:DriveMenu
 Laufwerk
+.
+:MENU:drive_mountauto
+Auto-mount Windows drive
 .
 :MENU:drive_mounthd
 Ordner als Festplatte einhängen

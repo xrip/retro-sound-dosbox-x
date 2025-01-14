@@ -419,10 +419,10 @@ foundit:
 	case M_TEXT:
 		if (!allow_vesa_tty) return VESA_FAIL;
 		adj = hack_lfb_xadjust / 8;
-		pageSize = 0;
+		pageSize = mblock->sheight * cwidth/8;
 		var_write(&minfo.BytesPerScanLine, (uint16_t)(mblock->twidth * 2));
 		if (!int10.vesa_oldvbe10) { /* optional in VBE 1.0 */
-			var_write(&minfo.NumberOfPlanes,0x4);
+			var_write(&minfo.NumberOfPlanes,0x1);
 			var_write(&minfo.BitsPerPixel,4);
 			var_write(&minfo.MemoryModel,0);	// text
 		}
@@ -438,11 +438,14 @@ foundit:
 		pageSize &= ~0xFFFFu;
 	}
 	Bitu pages = 0;
-	if (pageSize > GetReportedVideoMemorySize() || (mblock->special & _USER_DISABLED)) {
+	Bitu calcmemsize = GetReportedVideoMemorySize();
+	if (mblock->type == M_LIN4) calcmemsize /= 4u; /* 4bpp planar = 4 bytes per video memory byte */
+	if (pageSize > calcmemsize || (mblock->special & _USER_DISABLED)) {
 		// mode not supported by current hardware configuration
 		modeAttributes &= ~0x1;
 	} else if (pageSize) {
-		pages = (GetReportedVideoMemorySize() / pageSize)-1;
+		pages = (calcmemsize / pageSize) - 1;
+		if (pages > 254) pages = 254;
 	}
 
 	/* VBE 1.0 allows fields "XResolution" and later to be optional.
@@ -504,7 +507,8 @@ foundit:
 		}
 	}
 
-	if (!int10.vesa_nolfb && !int10.vesa_oldvbe) var_write(&minfo.PhysBasePtr,S3_LFB_BASE + adj + (hack_lfb_yadjust*(long)host_readw((HostPt)(&minfo.BytesPerScanLine))));
+	if (!int10.vesa_nolfb && !int10.vesa_oldvbe && (modeAttributes&0x80)/*ModeAttributes indicates an LFB*/)
+		var_write(&minfo.PhysBasePtr,S3_LFB_BASE + adj + (hack_lfb_yadjust*(long)host_readw((HostPt)(&minfo.BytesPerScanLine))));
 
 	MEM_BlockWrite(buf,&minfo,sizeof(MODE_INFO));
 	return VESA_SUCCESS;
@@ -539,7 +543,10 @@ uint8_t VESA_SetCPUWindow(uint8_t window,uint16_t address) {
 	 * parameter. */
 	address &= 0xFFu;
 
-	if ((!vesa_bank_switch_window_range_check) || (uint32_t)(address)*vga.svga.bank_size<GetReportedVideoMemorySize()) { /* range check, or silently truncate address depending on dosbox-x.conf setting */
+	Bitu calcmemsize = GetReportedVideoMemorySize();
+	if (CurMode->type == M_LIN4) calcmemsize /= 4u; /* 4bpp planar = 4 bytes per video memory byte */
+
+	if ((!vesa_bank_switch_window_range_check) || (uint32_t)(address)*vga.svga.bank_size<calcmemsize) { /* range check, or silently truncate address depending on dosbox-x.conf setting */
 		IO_Write(0x3d4,0x6a);
 		IO_Write(0x3d5,(uint8_t)address); /* NTS: in vga_s3.cpp this is a 7-bit field, wraparound will occur at address >= 128 but only if emulating a full 64KB bank as normal */
 		return VESA_SUCCESS;
@@ -633,7 +640,8 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 			pixels_per_offset = 4;
 			break;
 		case M_LIN24:
-			pixels_per_offset = 2;
+			pixels_per_offset = 8;
+			bytes_per_offset = 24;
 			break;
 		case M_LIN32:
 			pixels_per_offset = 2;
@@ -663,7 +671,11 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 			// TODO: Add dosbox-x.conf option to control which behavior is emulated.
 			if (new_offset > max_offset) new_offset = max_offset;
 
-			vga.config.scan_len = new_offset;
+			if (CurMode->type == M_LIN24)
+				vga.config.scan_len = new_offset * 3u;
+			else
+				vga.config.scan_len = new_offset;
+
 			VGA_CheckScanLength();
 			break;
 
@@ -684,7 +696,11 @@ uint8_t VESA_ScanLineLength(uint8_t subcall,uint16_t val, uint16_t & bytes,uint1
 			// TODO: Add dosbox-x.conf option to control which behavior is emulated.
 			if (new_offset > max_offset) new_offset = max_offset;
 
-			vga.config.scan_len = new_offset;
+			if (CurMode->type == M_LIN24)
+				vga.config.scan_len = new_offset * 3u;
+			else
+				vga.config.scan_len = new_offset;
+
 			VGA_CheckScanLength();
 			break;
 
@@ -748,7 +764,10 @@ uint8_t VESA_SetDisplayStart(uint16_t x,uint16_t y,bool wait) {
 		panning_factor = 2; // this may be DOSBox specific
 		pixels_per_offset = 4;
 		break;
-	case M_LIN24: // FIXME
+	case M_LIN24:
+		pixels_per_offset = 8;
+		x *= 3;
+		break;
 	case M_LIN32:
 		pixels_per_offset = 2;
 		break;

@@ -51,6 +51,10 @@ using namespace std;
 #include "keyboard.h"
 #include "control.h"
 
+bool Clear_SYSENTER_Debug();
+bool Toggle_BreakSYSEnter();
+bool Toggle_BreakSYSExit();
+
 /* [https://github.com/joncampbell123/dosbox-x/issues/1264] ncurses non-ASCII keys are outside ASCII range (start at octal 0400 == hex 0x100) */
 static inline int ncurses_aware_toupper(int x) {
 	if (x >= 0x00 && x <= 0xFF) return toupper(x);
@@ -972,120 +976,120 @@ static void DrawData(void) {
 	uint8_t ch;
 	uint32_t add = dataOfs;
 	uint64_t address;
-    int w,h,y;
+	int w,h,y;
 
 	/* Data win */	
-    getmaxyx(dbg.win_data,h,w);
+	getmaxyx(dbg.win_data,h,w);
 
-    if ((paging.enabled || cpu.pmode) && dbg.data_view != DBGBlock::DATV_PHYSICAL) h--;
+	if ((paging.enabled || cpu.pmode) && dbg.data_view != DBGBlock::DATV_PHYSICAL) h--;
 
 	for (y=0;y<h;y++) {
 		// Address
-        if (dbg.data_view == DBGBlock::DATV_SEGMENTED) {
-            wattrset (dbg.win_data,0);
-            mvwprintw (dbg.win_data,y,0,"%04X:%08X ",dataSeg,add);
-        }
-        else {
-            wattrset (dbg.win_data,0);
-            mvwprintw (dbg.win_data,y,0,"     %08X ",add);
-        }
+		if (dbg.data_view == DBGBlock::DATV_SEGMENTED) {
+			wattrset (dbg.win_data,0);
+			mvwprintw (dbg.win_data,y,0,"%04X:%08X ",dataSeg,add);
+		}
+		else {
+			wattrset (dbg.win_data,0);
+			mvwprintw (dbg.win_data,y,0,"     %08X ",add);
+		}
 
-        if (dbg.data_view == DBGBlock::DATV_PHYSICAL) {
-            for (int x=0; x<16; x++) {
-                address = add;
+		if (dbg.data_view == DBGBlock::DATV_PHYSICAL) {
+			for (int x=0; x<16; x++) {
+				address = add;
 
-                /* save the original page addr.
-                 * we must hack the phys page tlb to make the hardware handler map 1:1 the page for this call. */
-                PhysPt opg = paging.tlb.phys_page[address>>12];
+				/* save the original page addr.
+				 * we must hack the phys page tlb to make the hardware handler map 1:1 the page for this call. */
+				PhysPt opg = paging.tlb.phys_page[address>>12];
 
-                paging.tlb.phys_page[address>>12] = (uint32_t)(address>>12);
+				paging.tlb.phys_page[address>>12] = (uint32_t)(address>>12);
 
-                PageHandler *ph = MEM_GetPageHandler((Bitu)(address>>12));
+				PageHandler *ph = MEM_GetPageHandler((Bitu)(address>>12));
 
-                if (ph->flags & PFLAG_READABLE)
-	                ch = ph->GetHostReadPt((Bitu)(address>>12))[address&0xFFF];
-                else
-                    ch = ph->readb((PhysPt)address);
+				if (ph->flags & PFLAG_READABLE)
+					ch = ph->GetHostReadPt((Bitu)(address>>12))[address&0xFFF];
+				else
+					ch = ph->readb((PhysPt)address);
 
-                paging.tlb.phys_page[address>>12] = opg;
+				paging.tlb.phys_page[address>>12] = opg;
 
-                wattrset (dbg.win_data,0);
-                mvwprintw (dbg.win_data,y,14+3*x,"%02X",ch);
-                if(showPrintable) {
-                    if (ch<32 || !isprint(ch)) ch='.';
-                    mvwaddch(dbg.win_data, y, 63 + x, ch);
-                } else {
+				wattrset (dbg.win_data,0);
+				mvwprintw (dbg.win_data,y,14+3*x,"%02X",ch);
+				if(showPrintable) {
+					if (ch<32 || !isprint(ch)) ch='.';
+					mvwaddch(dbg.win_data, y, 63 + x, ch);
+				} else {
 #ifdef __PDCURSES__
-                    mvwaddrawch(dbg.win_data, y, 63 + x, ch);
+					mvwaddrawch(dbg.win_data, y, 63 + x, ch);
 #else
-                    if(ch < 32) ch = '.';
-                    mvwaddch(dbg.win_data, y, 63 + x, ch);
+					if(ch < 32) ch = '.';
+					mvwaddch(dbg.win_data, y, 63 + x, ch);
 #endif
-                }
+				}
 
-                add++;
-            }
-        }
-        else {
-            for (int x=0; x<16; x++) {
-                if (dbg.data_view == DBGBlock::DATV_SEGMENTED)
-                    address = GetAddress(dataSeg,add);
-                else
-                    address = add;
+				add++;
+			}
+		}
+		else {
+			for (int x=0; x<16; x++) {
+				if (dbg.data_view == DBGBlock::DATV_SEGMENTED)
+					address = GetAddress(dataSeg,add);
+				else
+					address = add;
 
-                if (address != mem_no_address) {
-                    if (!mem_readb_checked((PhysPt)address,&ch)) {
-                        wattrset (dbg.win_data,0);
-                        mvwprintw (dbg.win_data,y,14+3*x,"%02X",ch);
-                        if(showPrintable) {
-                            if (ch<32 || !isprint(ch)) ch='.';
-                            mvwprintw (dbg.win_data,y,63+x,"%c",ch);
-                        } else mvwaddch(dbg.win_data,y,63+x,ch);
-                    }
-                    else {
-                        wattrset (dbg.win_data, COLOR_PAIR(PAIR_BYELLOW_BLACK));
-                        mvwprintw (dbg.win_data,y,14+3*x,"pf");
-                        mvwprintw (dbg.win_data,y,63+x,".");
-                    }
-                }
-                else {
-                    wattrset (dbg.win_data, COLOR_PAIR(PAIR_BYELLOW_BLACK));
-                    mvwprintw (dbg.win_data,y,14+3*x,"na");
-                    mvwprintw (dbg.win_data,y,63+x,".");
-                }
+				if (address != mem_no_address) {
+					if (!mem_readb_checked((PhysPt)address,&ch)) {
+						wattrset (dbg.win_data,0);
+						mvwprintw (dbg.win_data,y,14+3*x,"%02X",ch);
+						if(showPrintable) {
+							if (ch<32 || !isprint(ch)) ch='.';
+							mvwprintw (dbg.win_data,y,63+x,"%c",ch);
+						} else mvwaddch(dbg.win_data,y,63+x,ch);
+					}
+					else {
+						wattrset (dbg.win_data, COLOR_PAIR(PAIR_BYELLOW_BLACK));
+						mvwprintw (dbg.win_data,y,14+3*x,"pf");
+						mvwprintw (dbg.win_data,y,63+x,".");
+					}
+				}
+				else {
+					wattrset (dbg.win_data, COLOR_PAIR(PAIR_BYELLOW_BLACK));
+					mvwprintw (dbg.win_data,y,14+3*x,"na");
+					mvwprintw (dbg.win_data,y,63+x,".");
+				}
 
-                add++;
-            }
-        }
+				add++;
+			}
+		}
 	}
 
-    if ((paging.enabled || cpu.pmode) && dbg.data_view != DBGBlock::DATV_PHYSICAL) {
-        /* one line was set aside for this information */
-        wattrset (dbg.win_data,0);
-        if (dbg.data_view == DBGBlock::DATV_SEGMENTED) {
-            address = GetAddress(dataSeg,dataOfs);
-            if (address != mem_no_address)
-                mvwprintw (dbg.win_data,y,0," LIN=%08X ",(unsigned int)address);
-            else
-                mvwprintw (dbg.win_data,y,0," LIN=XXXXXXXX ");
-        }
-        else {
-            address = dataOfs;
-            mvwprintw (dbg.win_data,y,0,"              ");
-        }
+	if ((paging.enabled || cpu.pmode) && dbg.data_view != DBGBlock::DATV_PHYSICAL) {
+		/* one line was set aside for this information */
+		wattrset (dbg.win_data,0);
+		if (dbg.data_view == DBGBlock::DATV_SEGMENTED) {
+			address = GetAddress(dataSeg,dataOfs);
+			if (address != mem_no_address)
+				mvwprintw (dbg.win_data,y,0," LIN=%08X ",(unsigned int)address);
+			else
+				mvwprintw (dbg.win_data,y,0," LIN=XXXXXXXX ");
+		}
+		else {
+			address = dataOfs;
+			mvwprintw (dbg.win_data,y,0,"              ");
+		}
 
-        if (!mem_readb_checked((PhysPt)address,&ch)) {
-            Bitu naddr = PAGING_GetPhysicalAddress((PhysPt)address);
-            mvwprintw (dbg.win_data,y,14,"PHY=%08X ",(unsigned int)naddr);
-        }
-        else {
-            mvwprintw (dbg.win_data,y,14,"PHY=XXXXXXXX ");
-        }
+		if (!mem_readb_checked((PhysPt)address,&ch)) {
+			Bitu naddr = PAGING_GetPhysicalAddress((PhysPt)address);
+			mvwprintw (dbg.win_data,y,14,"PHY=%08X ",(unsigned int)naddr);
+		}
+		else {
+			mvwprintw (dbg.win_data,y,14,"PHY=XXXXXXXX ");
+		}
 
-        wclrtoeol(dbg.win_data);
+		wclrtoeol(dbg.win_data);
 
-        y++;
-    }
+		y++;
+	}
 
 	wrefresh(dbg.win_data);
 }
@@ -1117,6 +1121,8 @@ void DrawRegistersUpdateOld(void) {
 
 	oldcpucpl=cpu.cpl;
 }
+
+extern bool do_pse;
 
 bool CPU_IsHLTed(void);
 
@@ -1191,7 +1197,15 @@ static void DrawRegisters(void) {
 		if (reg_flags & FLAG_VM) mvwprintw(dbg.win_reg,0,76,"VM86");
 		else if (cpu.code.big) mvwprintw(dbg.win_reg,0,76,"Pr32");
 		else mvwprintw(dbg.win_reg,0,76,"Pr16");
-		mvwprintw(dbg.win_reg,2,62,paging.enabled ? "PAGE" : "NOPG");
+		if (paging.enabled) {
+			if (do_pse)
+				mvwprintw(dbg.win_reg,2,60,"PAGEPSE");
+			else
+				mvwprintw(dbg.win_reg,2,60,"PAGE");
+		}
+		else {
+			mvwprintw(dbg.win_reg,2,60,"NOPG");
+		}
 	} else {
 		mvwprintw(dbg.win_reg,0,76,"Real");
 		mvwprintw(dbg.win_reg,2,62,"NOPG");
@@ -1492,6 +1506,8 @@ void SkipSpace(char*& hex) {
     while (*hex == ' ') hex++;
 }
 
+extern uint32_t cpu_sep_eip;
+
 uint32_t GetHexValue(char* const str, char* &hex,bool *parsed,int exprge)
 {
     uint32_t regval = 0;
@@ -1555,6 +1571,8 @@ uint32_t GetHexValue(char* const str, char* &hex,bool *parsed,int exprge)
             else if (something == "CR0") { regval = (uint32_t)cpu.cr0; }
             else if (something == "CR2") { regval = (uint32_t)paging.cr2; }
             else if (something == "CR3") { regval = (uint32_t)paging.cr3; }
+            else if (something == "CR4") { regval = (uint32_t)cpu.cr4; }
+            else if (something == "SYSENTER") { regval = (uint32_t)cpu_sep_eip; }
             else if (something == "EAX") { regval = reg_eax; }
             else if (something == "EBX") { regval = reg_ebx; }
             else if (something == "ECX") { regval = reg_ecx; }
@@ -2134,6 +2152,22 @@ bool ParseCommand(char* str) {
 		return true;
 	}
 
+	if (command == "BPSYSENTER") {
+		if (Toggle_BreakSYSEnter())
+			DEBUG_ShowMsg("DEBUG: Breakpoint on SYSENTER set\n");
+		else
+			DEBUG_ShowMsg("DEBUG: Breakpoint on SYSENTER cleared\n");
+		return true;
+	}
+
+	if (command == "BPSYSEXIT") {
+		if (Toggle_BreakSYSExit())
+			DEBUG_ShowMsg("DEBUG: Breakpoint on SYSEXIT set\n");
+		else
+			DEBUG_ShowMsg("DEBUG: Breakpoint on SYSEXIT cleared\n");
+		return true;
+	}
+
 	if (command == "BP") { // Add new breakpoint
 		uint16_t seg = (uint16_t)GetHexValue(found,found);found++; // skip ":"
 		uint32_t ofs = GetHexValue(found,found);
@@ -2222,6 +2256,7 @@ bool ParseCommand(char* str) {
 		uint8_t bpNr	= (uint8_t)GetHexValue(found,found); 
 		if ((bpNr==0x00) && (*found=='*')) { // Delete all
 			CBreakpoint::DeleteAll();
+			Clear_SYSENTER_Debug();
 			DEBUG_ShowMsg("DEBUG: Breakpoints deleted.\n");
 		} else {
 			// delete single breakpoint
@@ -4543,7 +4578,7 @@ void DEBUG_Enable_Handler(bool pressed) {
 		showhelp=true;
 		DEBUG_ShowMsg("***| TYPE HELP (+ENTER) TO GET AN OVERVIEW OF ALL COMMANDS |***\n");
 	}
-	KEYBOARD_ClrBuffer();
+	//KEYBOARD_ClrBuffer();
     GFX_SetTitle(-1,-1,-1,false);
     runnormal = false;
     if (debugrunmode==1) ParseCommand("RUN");
@@ -4894,49 +4929,49 @@ static void LogIDT(void) {
 void LogPages(char* selname) {
     DEBUG_BeginPagedContent();
 
-	if (paging.enabled) {
-		char out1[512];
-		Bitu sel = GetHexValue(selname,selname);
-		if ((sel==0x00) && ((*selname==0) || (*selname=='*'))) {
-			for (unsigned int i=0; i<0xfffff; i++) {
-				Bitu table_addr=(paging.base.page<<12u)+(i >> 10u)*(Bitu)4u;
-				X86PageEntry table;
-				table.load=phys_readd((PhysPt)table_addr);
-				if (table.block.p) {
-					X86PageEntry entry;
-                    PhysPt entry_addr=(table.block.base<<12u)+(i & 0x3ffu)* 4u;
-					entry.load=phys_readd(entry_addr);
-					if (entry.block.p) {
-						sprintf(out1,"page %05Xxxx -> %04Xxxx  flags [uw] %x:%x::%x:%x [d=%x|a=%x]",
-							i,entry.block.base,entry.block.us,table.block.us,
-							entry.block.wr,table.block.wr,entry.block.d,entry.block.a);
-                        DEBUG_ShowMsg("%s",out1);
-					}
-				}
-			}
-		} else {
-			Bitu table_addr=(paging.base.page<<12u)+(sel >> 10u)*4u;
-			X86PageEntry table;
-			table.load=phys_readd((PhysPt)table_addr);
-			if (table.block.p) {
-				X86PageEntry entry;
-				Bitu entry_addr=((Bitu)table.block.base<<12u)+(sel & 0x3ffu)*4u;
-				entry.load=phys_readd((PhysPt)entry_addr);
-				sprintf(out1,"page %05lXxxx -> %04lXxxx  flags [puw] %x:%x::%x:%x::%x:%x",
-					(unsigned long)sel,
-					(unsigned long)entry.block.base,
-					entry.block.p,table.block.p,entry.block.us,table.block.us,entry.block.wr,table.block.wr);
-                DEBUG_ShowMsg("%s",out1);
-			} else {
-				sprintf(out1,"pagetable %03X not present, flags [puw] %x::%x::%x",
-					(int)(sel >> 10),
-					(int)table.block.p,
-					(int)table.block.us,
-					(int)table.block.wr);
-                DEBUG_ShowMsg("%s",out1);
-			}
-		}
-	}
+    if (paging.enabled) {
+	    char out1[512];
+	    Bitu sel = GetHexValue(selname,selname);
+	    if ((sel==0x00) && ((*selname==0) || (*selname=='*'))) {
+		    for (unsigned int i=0; i<0xfffff; i++) {
+			    Bitu table_addr=(paging.base.page<<12u)+(i >> 10u)*(Bitu)4u;
+			    X86PageEntry table;
+			    table.load=phys_readd((PhysPt)table_addr);
+			    if (table.block.p) {
+				    X86PageEntry entry;
+				    PhysPt entry_addr=(table.block.base<<12u)+(i & 0x3ffu)* 4u;
+				    entry.load=phys_readd(entry_addr);
+				    if (entry.block.p) {
+					    sprintf(out1,"page %05Xxxx -> %04Xxxx  flags [uw] %x:%x::%x:%x [d=%x|a=%x]",
+							    i,entry.block.base,entry.block.us,table.block.us,
+							    entry.block.wr,table.block.wr,entry.block.d,entry.block.a);
+					    DEBUG_ShowMsg("%s",out1);
+				    }
+			    }
+		    }
+	    } else {
+		    Bitu table_addr=(paging.base.page<<12u)+(sel >> 10u)*4u;
+		    X86PageEntry table;
+		    table.load=phys_readd((PhysPt)table_addr);
+		    if (table.block.p) {
+			    X86PageEntry entry;
+			    Bitu entry_addr=((Bitu)table.block.base<<12u)+(sel & 0x3ffu)*4u;
+			    entry.load=phys_readd((PhysPt)entry_addr);
+			    sprintf(out1,"page %05lXxxx -> %04lXxxx  flags [puw] %x:%x::%x:%x::%x:%x",
+					    (unsigned long)sel,
+					    (unsigned long)entry.block.base,
+					    entry.block.p,table.block.p,entry.block.us,table.block.us,entry.block.wr,table.block.wr);
+			    DEBUG_ShowMsg("%s",out1);
+		    } else {
+			    sprintf(out1,"pagetable %03X not present, flags [puw] %x::%x::%x",
+					    (int)(sel >> 10),
+					    (int)table.block.p,
+					    (int)table.block.us,
+					    (int)table.block.wr);
+			    DEBUG_ShowMsg("%s",out1);
+		    }
+	    }
+    }
 
     DEBUG_EndPagedContent();
 }

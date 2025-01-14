@@ -1391,7 +1391,8 @@ Bitu DOS_LoadKeyboardLayout(const char * layoutname, int32_t codepage, const cha
 		return kerrcode;
 	}
 	// Everything went fine, switch to new layout
-	loaded_layout=temp_layout;
+    delete loaded_layout;
+    loaded_layout=temp_layout;
 	return KEYB_NOERROR;
 }
 
@@ -1405,7 +1406,7 @@ Bitu DOS_SwitchKeyboardLayout(const char* new_layout, int32_t& tried_cp) {
 			loaded_layout=changed_layout;
 		}
 		return ret_code;
-	} else return 0xff;
+	} else return 0xFF;
 }
 
 
@@ -1418,6 +1419,7 @@ Bitu DOS_ChangeKeyboardLayout(const char* layoutname, int32_t codepage) {
         return kerrcode;
     }
     // Everything went fine, switch to new layout
+    delete loaded_layout;
     loaded_layout = temp_layout;
     return KEYB_NOERROR;
 }
@@ -1461,7 +1463,11 @@ public:
 		loaded_layout=new keyboard_layout();
 
 		Bits wants_dos_codepage = -1;
-		if (!strncmp(layoutname,"auto",4)) {
+        if(IS_PC98_ARCH) {
+            layoutname = "jp";
+            tocp = 932;
+        }
+        else if(!strncmp(layoutname, "auto", 4)) {
 #if defined (WIN32)
 			WORD cur_kb_layout = LOWORD(GetKeyboardLayout(0));
 			WORD cur_kb_subID  = 0;
@@ -1488,9 +1494,9 @@ public:
 					layoutname = "bg241";
 					break; */
 				case 1028: // Taiwan, CP 950, Alt CP 951
-                    layoutname = "tw";
-                    tocp = 950;
-                    break;
+					layoutname = "tw";
+					tocp = 950;
+					break;
 				case 1029: // Czech Republic, CP 852, Alt CP 850
 					layoutname = "cz243";
 					break;
@@ -1502,9 +1508,9 @@ public:
 					wants_dos_codepage = GetDefaultCP();
 					break;
 				case 1033: // US, CP 437
-                    layoutname = "us";
-                    wants_dos_codepage = GetDefaultCP();
-                    break;
+					layoutname = "us";
+					wants_dos_codepage = GetDefaultCP();
+					break;
 				case 1032: // Greece, CP 869, Alt CP 813
 					layoutname = "gk";
 					break;
@@ -1532,13 +1538,13 @@ public:
 					wants_dos_codepage = GetDefaultCP();
 					break;
 				case 1041: // Japan, CP 932
-                    layoutname = "jp";
-                    tocp = 932;
-                    break;
+					layoutname = "jp";
+					tocp = 932;
+					break;
 				case 1042: // Korea, CP 949
-                    layoutname = "ko";
-                    tocp = 949;
-                    break;
+					layoutname = "ko";
+					tocp = 949;
+					break;
 				case 1043: // Netherlands, CP 850, Alt CP 437
 					layoutname = "nl";
 					wants_dos_codepage = GetDefaultCP();
@@ -1605,9 +1611,9 @@ public:
 					layoutname = "hy";
 					break; */
 				case 2052: // China, CP 936
-                    layoutname = "cn";
-                    tocp = 936;
-                    break;
+					layoutname = "cn";
+					tocp = 936;
+					break;
 				case 2055: // Swiss-German, CP 850, Alt CP 437
 					layoutname = "sg";
 					wants_dos_codepage = GetDefaultCP();
@@ -1632,9 +1638,9 @@ public:
 					layoutname = "po";
 					break;
 				case 3076: // Hong Kong, CP 950, Alt CP 951
-                    layoutname = "hk";
-                    tocp = 950;
-                    break;
+					layoutname = "hk";
+					tocp = 950;
+					break;
 				case 3081: // Australia, CP 850, Alt CP 437
 					layoutname = "us"; 
 					wants_dos_codepage = GetDefaultCP();
@@ -1672,19 +1678,19 @@ public:
 					wants_dos_codepage = GetDefaultCP();
 					break;
 				default:
-                    layoutname = "us";
-                    wants_dos_codepage = 437;
-                    break;
+					layoutname = "us";
+					wants_dos_codepage = 437;
+					break;
 			}
 #else // !WIN32
-            layoutname = "us";
-            wants_dos_codepage = 437;
+    		layoutname = "us";
+			wants_dos_codepage = 437;
 #endif
-        }
-        else if(!strncmp(layoutname, "none", 4)) {
-            layoutname = "us";
-            wants_dos_codepage = 437;
-        }
+		}
+		else if(!strncmp(layoutname, "none", 4)) {
+			layoutname = "us";
+			wants_dos_codepage = 437;
+		}
 
 		bool extract_codepage = !tocp;
 		if (wants_dos_codepage>0) {

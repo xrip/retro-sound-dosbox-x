@@ -101,7 +101,7 @@ VideoModeBlock ModeList_VGA[]={
 /* Alias of mode 101 */
 { 0x069  ,M_LIN8   ,640 ,480 ,80 ,30 ,8 ,16 ,1 ,0xA0000 ,0x10000,100 ,525 ,80 ,480 ,0, 0},
 /* Alias of mode 102 */
-{ 0x06A  ,M_LIN4   ,800 ,600 ,100,37 ,8 ,16 ,1 ,0xA0000 ,0x10000,128 ,663 ,100,600 ,0, 0},
+{ 0x06A  ,M_LIN4   ,800 ,600 ,100,37 ,8 ,16 ,1 ,0xA0000 ,0x10000,132 ,628 ,100,600 ,0, 0}, // NTS: This is supposed to be the same mode as ox102!
 
 /* Toshiba T3100, J-3100 */
 { 0x074  ,M_DCGA   ,640 ,400 ,80 ,25 ,8 ,16 ,1 ,0xB8000 ,0x8000 ,100 ,449 ,80 ,400 ,0, 0},
@@ -463,10 +463,10 @@ VideoModeBlock ModeList_VGA_Paradise[]={
 
 VideoModeBlock ModeList_EGA_200[]={
 /* mode  ,type     ,sw  ,sh  ,tw ,th ,cw,ch ,pt,pstart  ,plength,htot,vtot,hde,vde special flags */
-{ 0x000  ,M_TEXT   ,320 ,400 ,40 ,25 ,8 ,8  ,8 ,0xB8000 ,0x0800 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK, 0},
-{ 0x001  ,M_TEXT   ,320 ,400 ,40 ,25 ,8 ,8  ,8 ,0xB8000 ,0x0800 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK, 0},
-{ 0x002  ,M_TEXT   ,640 ,400 ,80 ,25 ,8 ,8  ,4 ,0xB8000 ,0x1000 ,118 ,262 ,80 ,200 ,0, 0},
-{ 0x003  ,M_TEXT   ,640 ,400 ,80 ,25 ,8 ,8  ,4 ,0xB8000 ,0x1000 ,118 ,262 ,80 ,200 ,0, 0},
+{ 0x000  ,M_TEXT   ,320 ,200 ,40 ,25 ,8 ,8  ,8 ,0xB8000 ,0x0800 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK, 0},
+{ 0x001  ,M_TEXT   ,320 ,200 ,40 ,25 ,8 ,8  ,8 ,0xB8000 ,0x0800 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK, 0},
+{ 0x002  ,M_TEXT   ,640 ,200 ,80 ,25 ,8 ,8  ,4 ,0xB8000 ,0x1000 ,118 ,262 ,80 ,200 ,0, 0},
+{ 0x003  ,M_TEXT   ,640 ,200 ,80 ,25 ,8 ,8  ,4 ,0xB8000 ,0x1000 ,118 ,262 ,80 ,200 ,0, 0},
 { 0x004  ,M_CGA4   ,320 ,200 ,40 ,25 ,8 ,8  ,1 ,0xB8000 ,0x4000 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK	| _REPEAT1},
 { 0x005  ,M_CGA4   ,320 ,200 ,40 ,25 ,8 ,8  ,1 ,0xB8000 ,0x4000 ,61  ,262 ,40 ,200 ,_EGA_HALF_CLOCK	| _REPEAT1},
 { 0x006  ,M_CGA2   ,640 ,200 ,80 ,25 ,8 ,8  ,1 ,0xB8000 ,0x4000 ,118 ,262 ,80 ,200 ,_REPEAT1, 0},
@@ -687,36 +687,36 @@ static bool SetCurMode(VideoModeBlock modeblock[],uint16_t mode) {
 			i++;
 		/* Hack for VBE 1.2 modes and 24/32bpp ambiguity UNLESS the user changed the mode */
 		else if (modeblock[i].mode >= 0x100 && modeblock[i].mode <= 0x11F &&
-            !(modeblock[i].special & _USER_MODIFIED) &&
+			!(modeblock[i].special & _USER_MODIFIED) &&
 			((modeblock[i].type == M_LIN32 && !vesa12_modes_32bpp) ||
-			(modeblock[i].type == M_LIN24 && vesa12_modes_32bpp))) {
+			 (modeblock[i].type == M_LIN24 && vesa12_modes_32bpp))) {
 			/* ignore */
 			i++;
 		}
-        /* ignore deleted modes */
-        else if (modeblock[i].type == M_ERROR) {
-            /* ignore */
-            i++;
-        }
-	    /* ignore disabled modes */
-        else if (modeblock[i].special & _USER_DISABLED) {
-            /* ignore */
-            i++;
-        }
-        /* ignore modes beyond the render scaler architecture's limits... unless the user created it. We did warn the user! */
-        else if (!(modeblock[i].special & _USER_MODIFIED) &&
-                (modeblock[i].swidth > SCALER_MAXWIDTH || modeblock[i].sheight > SCALER_MAXHEIGHT)) {
-            /* ignore */
-            i++;
-        }
+		/* ignore deleted modes */
+		else if (modeblock[i].type == M_ERROR) {
+			/* ignore */
+			i++;
+		}
+		/* ignore disabled modes */
+		else if (modeblock[i].special & _USER_DISABLED) {
+			/* ignore */
+			i++;
+		}
+		/* ignore modes beyond the render scaler architecture's limits... unless the user created it. We did warn the user! */
+		else if (!(modeblock[i].special & _USER_MODIFIED) &&
+			(modeblock[i].swidth > SCALER_MAXWIDTH || modeblock[i].sheight > SCALER_MAXHEIGHT)) {
+			/* ignore */
+			i++;
+		}
 		else {
 			if ((!int10.vesa_oldvbe) || (ModeList_VGA[i].mode<0x120)) {
 				CurMode=&modeblock[i];
 #if defined(USE_TTF)
-                if(modeblock[i].type == M_TEXT) ttf_switch_on(false);
-                else ttf_switch_off(false); // Disable TTF output when switching to graphics mode
+                ttf_switch_off(false); // Disable TTF output when switching to graphics mode,
+                                       // however for text mode, temporary switched off and switched on again later to avoid glitches
 #endif
-                return true;
+				return true;
 			}
 			return false;
 		}
@@ -866,7 +866,8 @@ static void FinishSetMode(bool clearmem) {
 	/* Setup the BIOS */
 	if (CurMode->mode<128) real_writeb(BIOSMEM_SEG,BIOSMEM_CURRENT_MODE,(uint8_t)CurMode->mode);
 	else real_writeb(BIOSMEM_SEG,BIOSMEM_CURRENT_MODE,(uint8_t)(CurMode->mode-0x98));	//Looks like the s3 bios
-#if defined(USE_TTF)
+#if 0
+//#if defined(USE_TTF)
     if (TTF_using() && CurMode->type==M_TEXT) {
         if (ttf.inUse) {
             ttf.cols = (int)CurMode->twidth;
@@ -887,7 +888,6 @@ static void FinishSetMode(bool clearmem) {
 		real_writeb(BIOSMEM_SEG,BIOSMEM_NB_ROWS,(uint8_t)(CurMode->theight-1));
 		real_writew(BIOSMEM_SEG,BIOSMEM_CHAR_HEIGHT,(uint16_t)CurMode->cheight);
 		real_writeb(BIOSMEM_SEG,BIOSMEM_VIDEO_CTL,(0x60|(clearmem?0:0x80)));
-		real_writeb(BIOSMEM_SEG,BIOSMEM_SWITCHES,(!IS_VGA_ARCH && ega200)?0x08:0x09);
 		// this is an index into the dcc table:
 #if C_DEBUG
 		if(IS_VGA_ARCH) real_writeb(BIOSMEM_SEG,BIOSMEM_DCC_INDEX,DISP2_Active()?0x0c:0x0b);
@@ -920,6 +920,12 @@ static void FinishSetMode(bool clearmem) {
 	int10.text_row = real_readb(BIOSMEM_SEG, BIOSMEM_NB_ROWS);
 	/* FIXME */
 	VGA_DAC_UpdateColorPalette();
+#if defined(USE_TTF)
+    //LOG_MSG("INT10: type=%d, mode=%d, twidth=%d, theight=%d", CurMode->type, CurMode->mode, CurMode->twidth, CurMode->theight);
+    if(CurMode->type == M_TEXT) { // FIX_ME: Text mode detection when screen mode is not changed via INT 10h function
+        ttf_switch_on(); // TTF mode is switched on in text mode only.
+    }
+#endif
 }
 
 uint8_t TandyGetCRTPage(void) {
@@ -953,7 +959,7 @@ bool INT10_SetVideoMode_OTHER(uint16_t mode,bool clearmem) {
 				LOG(LOG_INT10,LOG_ERROR)("Trying to set illegal mode %X",mode);
 				return false;
 			}
-            break;
+			break;
 		case MCH_MCGA:
 			if (!SetCurMode(ModeList_MCGA,mode)) {
 				LOG(LOG_INT10,LOG_ERROR)("Trying to set illegal mode %X",mode);
@@ -1259,8 +1265,35 @@ static bool ShouldUseVPT(void) {
 
 bool unmask_irq0_on_int10_setmode = true;
 bool INT10_SetVideoMode(uint16_t mode) {
+	if (IS_EGA_ARCH) {
+		/* "After The War" forces EGA into 200-line CGA 8x8 text mode by
+		 * modifying the 16-bits at 0x487-0x488 to alter the EGA switches
+		 * and other info. For this trick to work here, we have to check
+		 * those bits every modeset. */
+		uint8_t egasw = (real_readb(BIOSMEM_SEG,BIOSMEM_SWITCHES)^0xFF)&0xF;
+		bool newega200 = (egasw == 0 || egasw == 1 || egasw == 2 || egasw == 6 || egasw == 7 || egasw == 8);
+
+		if (ega200 != newega200) {
+			LOG(LOG_MISC,LOG_DEBUG)(
+				"EGA: Guest application changed BIOS DATA AREA EGA switches, %s 200-line EGA modes (sw=0x%x)",
+				newega200?"enabled":"disabled",egasw);
+
+			ega200 = newega200;
+		}
+	}
+
 	if (CurMode&&CurMode->mode==7&&!IS_PC98_ARCH) {
-		VideoModeBlock *modelist=svgaCard==SVGA_TsengET4K||svgaCard==SVGA_TsengET3K?ModeList_VGA:(svgaCard==SVGA_ParadisePVGA1A?ModeList_VGA_Paradise:(IS_VGA_ARCH?ModeList_VGA:(ega200?ModeList_EGA_200:ModeList_EGA)));
+		VideoModeBlock *modelist;
+
+		if (svgaCard == SVGA_TsengET4K || svgaCard == SVGA_TsengET3K)
+			modelist = ModeList_VGA_Tseng;
+		else if (svgaCard == SVGA_ParadisePVGA1A)
+			modelist = ModeList_VGA_Paradise;
+		else if (IS_VGA_ARCH)
+			modelist = ModeList_VGA;
+		else
+			modelist = ega200 ? ModeList_EGA_200 : ModeList_EGA;
+
 		for (Bitu i = 0; modelist[i].mode != 0xffff; i++) {
 			if (modelist[i].mode == mode) {
 				if (modelist[i].type != M_TEXT) {
@@ -1282,6 +1315,8 @@ bool INT10_SetVideoMode(uint16_t mode) {
 		clearmem=false;
 		mode-=0x80;
 	}
+
+	if (IS_VGA_ARCH && svgaCard == SVGA_None && mode > 0x13) return false; /* Standard VGA does not have anything above 0x13 */
 
 	if (unmask_irq0_on_int10_setmode) {
 		/* setting the video mode unmasks certain IRQs as a matter of course */
@@ -1483,7 +1518,7 @@ bool INT10_SetVideoMode(uint16_t mode) {
 
 	if (IS_VGA_ARCH || (IS_EGA_ARCH && vga.mem.memsize >= 0x20000))
 		seq_data[4]|=0x02;	//More than 64kb
-	else if (IS_EGA_ARCH && CurMode->vdispend==350) {
+	else if (IS_EGA_ARCH && CurMode->vdispend==350 && CurMode->type == M_EGA) {
 		seq_data[4] &= ~0x04; // turn on odd/even
 		seq_data[1] |= 0x04; // half clock
 	}
@@ -1756,7 +1791,7 @@ bool INT10_SetVideoMode(uint16_t mode) {
 		case M_EGA:
 			if (CurMode->pitch != 0)
 				offset = ouwidth/(2*8);
-			else if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350)
+			else if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350 && CurMode->type == M_EGA)
 				offset = CurMode->hdispend/4; /* = 0x14, See EGA BIOS listing for entry 10h 16K mode [https://ibmmuseum.com/Adapters/Video/EGA/IBM_EGA_Manual.pdf] */
 			else
 				offset = CurMode->hdispend/2;
@@ -1809,8 +1844,10 @@ bool INT10_SetVideoMode(uint16_t mode) {
 			else
 				mode_control=0xe3;
 
-			if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350)
+			if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350 && CurMode->type == M_EGA) {
 				mode_control &= ~0x40; // word mode
+				mode_control |=  0x08; // increment only every other clock
+			}
 			break;
 		case M_TEXT:
 		case M_VGA:
@@ -1828,12 +1865,12 @@ bool INT10_SetVideoMode(uint16_t mode) {
 			break;
 	}
 
-	if (IS_EGA_ARCH && vga.mem.memsize < 0x20000)
+	if (IS_EGA_ARCH && vga.mem.memsize < 0x20000) {
 		mode_control &= ~0x20; // address wrap bit 13
+	}
 
 	IO_Write(crtc_base, 0x17); IO_Write(crtc_base + 1u, mode_control);
 
-	/* TODO: If vptable, bypass all the above CRTC register settings */
 	if (vptable) {
 		for (unsigned int i=0;i < 0x19;i++) {
 			IO_Write(crtc_base,i);
@@ -1847,9 +1884,10 @@ bool INT10_SetVideoMode(uint16_t mode) {
 
 	if (svgaCard == SVGA_S3Trio) {
 		/* Setup the correct clock */
-		if (CurMode->mode>=0x100) {
+		if (CurMode->mode>=0x100 || CurMode->mode > 0x13) {
 			if (CurMode->vdispend>480)
 				misc_output|=0xc0;	//480-line sync
+
 			misc_output|=0x0c;		//Select clock 3
 			Bitu clock=CurMode->vtotal*8*CurMode->htotal*70;
 			if(CurMode->type==M_LIN15 || CurMode->type==M_LIN16) clock/=2;
@@ -1911,7 +1949,7 @@ bool INT10_SetVideoMode(uint16_t mode) {
 		break;
 	case M_LIN4:
 	case M_EGA:
-		if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350) {
+		if (IS_EGA_ARCH && vga.mem.memsize < 0x20000 && CurMode->vdispend==350 && CurMode->type == M_EGA) {
 			gfx_data[0x5]|=0x10;		//Odd-Even Mode
 			gfx_data[0x6]|=0x02;		//Odd-Even Mode
 			gfx_data[0x7]=0x5;			/* Color don't care */
@@ -2011,6 +2049,11 @@ att_text16:
 					att_data[i+5]=0x07;
 					att_data[i+6]=0x00;
 					att_data[i+7]=0x00;
+				}
+			} else if (IS_EGAVGA_ARCH && CurMode->sheight == 200) {
+				for (uint8_t ct=0;ct<8;ct++) {
+					att_data[ct]=ct;
+					att_data[ct+8]=ct+0x10;
 				}
 			} else {
 				for (uint8_t ct=0;ct<8;ct++) {
@@ -2159,6 +2202,15 @@ att_text16:
 						}
 					}
 					break;
+				}
+				else if (CurMode->sheight == 200) {
+					/* 200-line text modes need the CGA RGBI type palette, same as 200-line EGA 16-color */
+					for (i=0;i<64;i++) {
+						IO_Write(0x3c9,ega_palette[i][0]);
+						IO_Write(0x3c9,ega_palette[i][1]);
+						IO_Write(0x3c9,ega_palette[i][2]);
+					}
+					break;
 				} //FALLTHROUGH!!!!
 			case M_LIN4: //Added for CAD Software
 dac_text16:
@@ -2173,19 +2225,19 @@ dac_text16:
 			case M_LIN15:
 			case M_LIN16:
 			case M_LIN24:
-		case M_LIN32:
-		case M_PACKED4:
-			// IBM and clones use 248 default colors in the palette for 256-color mode.
-			// The last 8 colors of the palette are only initialized to 0 at BIOS init.
-			// Palette index is left at 0xf8 as on most clones, IBM leaves it at 0x10.
-			for (i=0;i<248;i++) {
-				IO_Write(0x3c9,vga_palette[i][0]);
-				IO_Write(0x3c9,vga_palette[i][1]);
-				IO_Write(0x3c9,vga_palette[i][2]);
-			}
-			break;
-		default:
-			break;
+			case M_LIN32:
+			case M_PACKED4:
+				// IBM and clones use 248 default colors in the palette for 256-color mode.
+				// The last 8 colors of the palette are only initialized to 0 at BIOS init.
+				// Palette index is left at 0xf8 as on most clones, IBM leaves it at 0x10.
+				for (i=0;i<248;i++) {
+					IO_Write(0x3c9,vga_palette[i][0]);
+					IO_Write(0x3c9,vga_palette[i][1]);
+					IO_Write(0x3c9,vga_palette[i][2]);
+				}
+				break;
+			default:
+				break;
 		}
 		if (IS_VGA_ARCH) {
 			/* check if gray scale summing is enabled */
@@ -2407,7 +2459,7 @@ Bitu VideoModeMemSize(Bitu mode) {
 		if (modelist[i].mode==mode) {
 			/* Hack for VBE 1.2 modes and 24/32bpp ambiguity */
 			if (modelist[i].mode >= 0x100 && modelist[i].mode <= 0x11F &&
-                !(modelist[i].special & _USER_MODIFIED) &&
+				!(modelist[i].special & _USER_MODIFIED) &&
 				((modelist[i].type == M_LIN32 && !vesa12_modes_32bpp) ||
 				 (modelist[i].type == M_LIN24 && vesa12_modes_32bpp))) {
 				/* ignore */

@@ -3480,6 +3480,7 @@ static Bitu DOS_26Handler(void) {
 	return DOS_26Handler_Actual(false);
 }
 
+bool private_segment_write_protect = false;
 bool enable_collating_uppercase = true;
 bool keep_private_area_on_boot = false;
 bool private_always_from_umb = false;
@@ -4148,6 +4149,7 @@ public:
         minimum_mcb_free = section->Get_hex("minimum mcb free");
 		minimum_mcb_segment = section->Get_hex("minimum mcb segment");
 		private_segment_in_umb = section->Get_bool("private area in umb");
+		private_segment_write_protect = section->Get_bool("private area write protect");
 		enable_collating_uppercase = section->Get_bool("collating and uppercase");
 		private_always_from_umb = section->Get_bool("kernel allocation in umb");
 		minimum_dos_initial_private_segment = section->Get_hex("minimum dos initial private segment");
@@ -5076,7 +5078,7 @@ void DOS_Int21_7143(char *name1, const char *name2) {
 						t->tm_mon  = ((int)(reg_di >> 5) & 0x0f) - 1;
 						t->tm_year = ((int)(reg_di >> 9) & 0x7f) + 80;
 						ttime=mktime(t);
-						LONGLONG ll = Int32x32To64(ttime, 10000000) + 116444736000000000 + (reg_bl==0x07?reg_si*100000:0);
+						LONGLONG ll = (ttime * 10000000LL) + 116444736000000000LL + (reg_bl==0x07?reg_si*100000:0);
 						time.dwLowDateTime = (DWORD) ll;
 						time.dwHighDateTime = (DWORD) (ll >> 32);
 						if (!SetFileTime(hFile, reg_bl==0x07?&time:NULL,reg_bl==0x05?&time:NULL,reg_bl==0x03?&time:NULL)) {

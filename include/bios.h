@@ -109,6 +109,16 @@
 #define BIOS_VIDEO_INFO_2               0x489
 #define BIOS_VIDEO_COMBO                0x48a
 
+#define BIOS_KEYBOARD_PCJR_FLAG2        0x488 /* KB_FLAG_2 */
+#define BIOS_KEYBOARD_PCJR_FLAG2_PUTCHAR     (1 << 0)
+#define BIOS_KEYBOARD_PCJR_FLAG2_INIT_DELAY  (1 << 1)
+#define BIOS_KEYBOARD_PCJR_FLAG2_HALF_RATE   (1 << 2)
+#define BIOS_KEYBOARD_PCJR_FLAG2_TYPE_OFF    (1 << 3)
+#define BIOS_KEYBOARD_PCJR_FLAG2_FN_LOCK     (1 << 4)
+#define BIOS_KEYBOARD_PCJR_FLAG2_FN_PENDING  (1 << 5)
+#define BIOS_KEYBOARD_PCJR_FLAG2_FN_BREAK    (1 << 6)
+#define BIOS_KEYBOARD_PCJR_FLAG2_FN_FLAG     (1 << 7)
+
 #define BIOS_KEYBOARD_FLAGS3            0x496
 #define BIOS_KEYBOARD_FLAGS3_HIDDEN_E1			(1 << 0)
 #define BIOS_KEYBOARD_FLAGS3_HIDDEN_E0			(1 << 1)
@@ -178,6 +188,13 @@ bool BIOS_AddKeyToBuffer(uint16_t code);
 void INT10_ReloadRomFonts();
 
 void BIOS_SetLPTPort (Bitu port, uint16_t baseaddr);
+
+// Is it safe to call mem_read/write as if part of the guest i.e. from the main GUI?
+// If the guest is running in protected mode, NO.
+// If the guest is not running under our own DOS kernel, NO.
+// This is required to avoid problems with helpful code in this project causing BSODs in Windows NT/2000/XP
+// because the BIOS data area addresses are invalid pages in that 32-bit environment!
+bool IsSafeToMemIOOnBehalfOfGuest();
 
 // \brief Synchronizes emulator num lock state with host.
 void BIOS_SynchronizeNumLock();

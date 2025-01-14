@@ -340,8 +340,10 @@ enum class CornerPreference {
     Round      = 2,
     RoundSmall = 3,
 };
+
+typedef HRESULT(WINAPI* PFNSETWINDOWATTRIBUTE)(HWND hWnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute);
+
 bool UpdateWindows11RoundCorners(HWND hWnd, CornerPreference cornerPreference) {
-    typedef HRESULT(WINAPI *PFNSETWINDOWATTRIBUTE)(HWND hWnd, DWORD dwAttribute, LPCVOID pvAttribute, DWORD cbAttribute);
     enum DWMWINDOWATTRIBUTE {
         DWMWA_WINDOW_CORNER_PREFERENCE = 33
     };
@@ -364,32 +366,49 @@ bool UpdateWindows11RoundCorners(HWND hWnd, CornerPreference cornerPreference) {
     return false;
 }
 
+# ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
+#  define DWMWA_USE_IMMERSIVE_DARK_MODE 20
+# endif
+
+
 bool HostDarkMode()
 {
-    // https://gist.github.com/rounk-ctrl/b04e5622e30e0d62956870d5c22b7017
+    // Uh, hey, Microsoft. Have you ever thought of providing a damn API function to just tell me whether Dark Mode or Light Mode
+    // is active? It could be a BOOL or an enumeration or something. Then you wouldn't have to support random GitHub projects that
+    // have to import unnamed ordinals from UXTHEME.DLL just to figure it out. While you're at it, why not provide a way for a
+    // Win32 program like myself to say "Hey, I want everything in this program to support Dark Mode, instead of having to hack
+    // every single window to try to get it to render Dark Mode".
+    return false;
+}
 
-    using PFNSHOULDAPPSUSEDARKMODE = bool (WINAPI *)();
-
-    const auto module = ::LoadLibrary("uxtheme.dll");
-
-    if(module)
+bool AllowDarkMode(HWND hwnd, BOOL enable) {
     {
-        auto* pfnShouldAppsUseDarkMode = reinterpret_cast<PFNSHOULDAPPSUSEDARKMODE>(
-            GetProcAddress(module, MAKEINTRESOURCEA(132)));
-
-        if(pfnShouldAppsUseDarkMode)
-        {
-            const auto dark = pfnShouldAppsUseDarkMode();
-
-            return dark;
+        // NTS: Contrary to first impressions, DWMWA_USE_IMMERSIVE_DARK_MODE does not match your title bar to the system
+        //      theme. No, that would make sense. Instead, DWMWA_USE_IMMERSIVE_DARK_MODE makes your title bar dark AT ALL TIMES.
+        //      To know if you should set this attribute, you have to detect Dark Mode. And Microsoft doesn't provide a damn API
+        //      to detect API. They do document some roundabout way involving WinRT to read a color and compute whether it is
+        //      dark or light and therefore Dark Mode, but there's no "Is Dark Mode" active API nor any kind of enumeration on
+        //      what mode is active.
+        //
+        //      So, we can enable dark mode for the title bar, but if we're going to enable it to match the system, we have to
+        //      determine if it is active, and that's not available right now because it's too complicated to figure it out. So,
+        //      no dark mode right now.
+        HMODULE hDwmApi = ::LoadLibrary("dwmapi.dll");
+        if(hDwmApi) {
+            auto* pfnSetWindowAttribute = reinterpret_cast<PFNSETWINDOWATTRIBUTE>(GetProcAddress(hDwmApi, "DwmSetWindowAttribute"));
+            if(pfnSetWindowAttribute) {
+                // FIXME: Why doesn't this affect the menu bar and dropdown menus from it?
+                // What's the point of a dark title bar when there's this bright white menu below it?
+                BOOL val = enable && HostDarkMode();
+                HRESULT res = pfnSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &val, sizeof(val));
+                return res == S_OK;
+            }
+            ::FreeLibrary(hDwmApi);
         }
-
-        FreeLibrary(module);
     }
 
     return false;
 }
-
 #endif
 
 #if defined(WIN32)
@@ -698,6 +717,8 @@ void UpdateWindowDimensions(Bitu width, Bitu height)
     currentWindowHeight = height;
 }
 
+static Bitu dim_width=0, dim_height=0, dpi_width=0, dpi_height=0;
+
 void PrintScreenSizeInfo(void) {
 #if 1
     const char *method = "?";
@@ -708,10 +729,12 @@ void PrintScreenSizeInfo(void) {
         case METHOD_XRANDR:     method = "XRandR";      break;
         case METHOD_WIN98BASE:  method = "Win98base";   break;
         case METHOD_COREGRAPHICS:method = "CoreGraphics";break;
-        default:                                                        break;
+        default: break;
     }
 
-    LOG_MSG("Screen report: Method '%s' (%.3f x %.3f pixels) at (%.3f x %.3f) (%.3f x %.3f mm) (%.3f x %.3f in) (%.3f x %.3f DPI)",
+    if(dim_width != screen_size_info.screen_dimensions_pixels.width || dim_height != screen_size_info.screen_dimensions_pixels.height
+        || dpi_width != screen_size_info.screen_dpi.width || dpi_height != screen_size_info.screen_dpi.height) {
+        LOG_MSG("Screen report: Method '%s' (%.3f x %.3f pixels) at (%.3f x %.3f) (%.3f x %.3f mm) (%.3f x %.3f in) (%.3f x %.3f DPI)",
             method,
 
             screen_size_info.screen_dimensions_pixels.width,
@@ -728,6 +751,11 @@ void PrintScreenSizeInfo(void) {
 
             screen_size_info.screen_dpi.width,
             screen_size_info.screen_dpi.height);
+            dim_width = screen_size_info.screen_dimensions_pixels.width;
+            dim_height = screen_size_info.screen_dimensions_pixels.height;
+            dpi_width = screen_size_info.screen_dpi.width;
+            dpi_height = screen_size_info.screen_dpi.height;
+        }
 #endif
 }
 
@@ -3073,7 +3101,7 @@ Bitu GFX_GetRGB(uint8_t red, uint8_t green, uint8_t blue) {
 
 #if C_OPENGL
         case SCREEN_OPENGL:
-# if SDL_BYTEORDER == SDL_LIL_ENDIAN && defined(MACOSX) /* macOS Intel builds use a weird RGBA order (alpha in the low 8 bits) */
+# if SDL_BYTEORDER == SDL_LIL_ENDIAN && defined(MACOSX) && !defined(C_SDL2) /* macOS Intel builds use a weird RGBA order (alpha in the low 8 bits) */
             //USE BGRA
             return (((unsigned long)blue << 24ul) | ((unsigned long)green << 16ul) | ((unsigned long)red <<  8ul)) | (255ul <<  0ul);
 # else
@@ -3317,6 +3345,8 @@ void Sendkeymapper(bool pressed) {
 }
 
 bool has_GUI_StartUp = false;
+
+void NewUIExperiment(bool pressed);
 
 static void GUI_StartUp() {
     DOSBoxMenu::item *item;
@@ -3809,8 +3839,12 @@ static void GUI_StartUp() {
     posy = -1;
     const char* windowposition = section->Get_string("windowposition");
     LOG_MSG("Configured windowposition: %s", windowposition);
-    if (windowposition && !strcmp(windowposition, "-"))
+    if(windowposition && !strcmp(windowposition, "-"))
+#if defined (WIN32) && !defined(C_SDL2)
+        posx = posy = -1;
+#else
         posx = posy = -2;
+#endif
     else if (windowposition && *windowposition && strcmp(windowposition, ",")) {
         char result[100];
         safe_strncpy(result, windowposition, sizeof(result));
@@ -3924,11 +3958,15 @@ static void GUI_StartUp() {
 #if defined(WIN32) && !defined(HX_DOS)
     if (section->Get_bool("forcesquarecorner") && UpdateWindows11RoundCorners(GetHWND(), CornerPreference::DoNotRound))
         LOG_MSG("SDL: Windows 11 round corners will be disabled.");
+    AllowDarkMode(GetHWND(), TRUE);
 #endif
     transparency = 0;
     SetWindowTransparency(section->Get_int("transparency"));
     UpdateWindowDimensions();
     ApplyPreventCap();
+
+    /* Experiment -- You're not supposed to play with this yet hence why no binding is assigned by default */
+    MAPPER_AddHandler(NewUIExperiment, MK_nothing, 0, "newuitest", "New UI test", &item);
 }
 
 void Mouse_AutoLock(bool enable) {
@@ -3939,9 +3977,6 @@ void Mouse_AutoLock(bool enable) {
         return;
     }
 #endif // C_GAMELINK
-
-    if (sdl.mouse.autolock == enable)
-        return;
 
     sdl.mouse.autolock=enable;
     if (sdl.mouse.autoenable) sdl.mouse.requestlock=enable;
@@ -4470,6 +4505,8 @@ static void HandleMouseButton(SDL_MouseButtonEvent * button, SDL_MouseMotionEven
 #endif
     bool inputToScreen = false;
     bool inMenu = false;
+    Section_prop * section=static_cast<Section_prop *>(control->GetSection("sdl"));
+    std::string munlock;
 
 #if DOSBOXMENU_TYPE == DOSBOXMENU_SDLDRAW /* SDL drawn menus */
     if (GFX_GetPreventFullscreen()) {
@@ -4995,7 +5032,8 @@ static void HandleMouseButton(SDL_MouseButtonEvent * button, SDL_MouseMotionEven
             // Don't pass click to mouse handler
             break;
         }
-        if (((middleunlock == 1 && !sdl.mouse.autoenable) || (middleunlock == 2 && sdl.mouse.autoenable) || middleunlock == 3) && sdl.mouse.autolock && mouse_notify_mode == 0 && button->button == SDL_BUTTON_MIDDLE) {
+        munlock = section->Get_string("middle_unlock");
+        if (((munlock == "manual" && !sdl.mouse.autoenable) || (munlock == "auto" && sdl.mouse.autoenable) || munlock == "both") && mouse_notify_mode == 0 && button->button == SDL_BUTTON_MIDDLE) {
             GFX_CaptureMouse();
             break;
         }
@@ -5984,7 +6022,7 @@ void GFX_Events() {
                             GFX_CaptureMouse();
                         SetPriority(sdl.priority.focus);
                         CPU_Disable_SkipAutoAdjust();
-                        if (strcmp(RunningProgram, "LOADLIN")) {
+                        if (strcmp(RunningProgram, "LOADLIN") && IsSafeToMemIOOnBehalfOfGuest()) {
                             BIOS_SynchronizeNumLock();
                             BIOS_SynchronizeCapsLock();
                             BIOS_SynchronizeScrollLock();
@@ -7266,6 +7304,8 @@ void TIMER_Init();
 void CMOS_Init();
 void VGA_Init();
 void CPU_Init();
+void Weitek_Init();
+void CPU_PreInit();
 void ISAPNP_Cfg_Init();
 #if C_FPU
 void FPU_Init();
@@ -8102,9 +8142,13 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         }
     }
 #endif
-
+    std::string tmp, config_path, res_path, config_combined;
+    /* -- Parse configuration files */
+    Cross::GetPlatformConfigDir(config_path);
+    Cross::GetPlatformResDir(res_path);
+    Cross::GetPlatformConfigName(tmp);
+    config_combined = config_path + tmp;
     {
-        std::string tmp,config_path,res_path,config_combined;
 
 #if defined(WIN32) && !defined(C_SDL2) && !defined(HX_DOS) && !defined(_WIN32_WINDOWS)
         {
@@ -8141,16 +8185,8 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             }
         }
 
-        /* -- Parse configuration files */
-        Cross::GetPlatformConfigDir(config_path);
-        Cross::GetPlatformResDir(res_path);
-
         /* -- -- first the user config file */
         if (control->opt_userconf || workdirsave>0) {
-            tmp.clear();
-            Cross::GetPlatformConfigDir(config_path);
-            Cross::GetPlatformConfigName(tmp);
-            config_combined = config_path + tmp;
 
             LOG(LOG_MISC,LOG_DEBUG)("Loading config file according to -userconf from %s",config_combined.c_str());
             control->ParseConfigFile(config_combined.c_str());
@@ -8164,10 +8200,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
                         tsec->HandleInputline("working directory option=autoprompt");
                 }
                 //Try to create the userlevel configfile.
-                tmp.clear();
                 Cross::CreatePlatformConfigDir(config_path);
-                Cross::GetPlatformConfigName(tmp);
-                config_combined = config_path + tmp;
 
                 LOG(LOG_MISC,LOG_DEBUG)("Attempting to write config file according to -userconf, to %s",config_combined.c_str());
                 if (control->PrintConfig(config_combined.c_str())) {
@@ -8221,12 +8254,19 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         /* -- -- if none found, use userlevel conf */
         if (!control->configfiles.size()) control->ParseConfigFile((config_path + "dosbox-x.conf").c_str());
         if (!control->configfiles.size()) {
-            tmp.clear();
-            Cross::GetPlatformConfigName(tmp);
-            control->ParseConfigFile((config_path + tmp).c_str());
+            control->ParseConfigFile(config_combined.c_str());
+        }
+
+        /* -- -- if none found, create userlevel conf */
+        if(!control->configfiles.size()) {
+            Cross::CreatePlatformConfigDir(config_path);
+            control->PrintConfig(config_combined.c_str());
+            control->ParseConfigFile(config_combined.c_str()); // Load the conf file created above 
+            if(control->configfiles.size()) LOG_MSG("CONFIG: Created and loaded user config file %s", config_combined.c_str());
         }
 
         if (control->configfiles.size()) {
+            LOG_MSG("CONFIG: Loaded config file: %s", control->configfiles.front().c_str());
             if (control->opt_eraseconf&&control->config_file_list.empty()) {
                 LOG_MSG("Erase config file: %s\n", control->configfiles.front().c_str());
                 unlink(control->configfiles.front().c_str());
@@ -8931,6 +8971,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
         CAPTURE_Init();
         IO_Init();
         HARDWARE_Init();
+        CPU_PreInit();
         Init_AddressLimitAndGateMask(); /* <- need to init address mask so Init_RAM knows the maximum amount of RAM possible */
         Init_MemoryAccessArray(); /* <- NTS: In DOSBox-X this is the "cache" of devices that responded to memory access */
         Init_A20_Gate(); // FIXME: Should be handled by motherboard!
@@ -8963,6 +9004,7 @@ int main(int argc, char* argv[]) SDL_MAIN_NOEXCEPT {
             item->set_text("Send special key");
         }
         CPU_Init();
+        Weitek_Init();
 #if C_FPU
         FPU_Init();
 #endif

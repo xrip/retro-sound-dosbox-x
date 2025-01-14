@@ -1484,11 +1484,11 @@ void Button::paint(Drawable& d) const
 bool Checkbox::keyDown(const Key &key)
 {
 	switch (key.special) {
-	case Key::None:
-		if (key.character != ' ') return false;
-	case Key::Enter:
-		break;
-	default: return false;
+		case Key::None:
+			if (key.character != ' ') return false;
+		case Key::Enter:
+			break;
+		default: return false;
 	}
 	mouseDown(0,0,Left);
 	return true;
@@ -1613,57 +1613,42 @@ void Menu::paint(Drawable &d) const
 	d.clear(DefaultTheme.MenuBar);
 
 	d.setColor(CurrentTheme.Border); // TODO
-	d.drawLine(0,height-1,width-1,height-1);
-	d.drawLine(width-1,0,width-1,height-1);
-
-	d.setColor(CurrentTheme.Shadow3D); // TODO
-	d.drawLine(0,0,width-2,0);
-	d.drawLine(0,0,0,height-2);
-	d.drawLine(0,height-2,width-2,height-2);
-	d.drawLine(width-2,0,width-2,height-2);
-
-	d.setColor(CurrentTheme.Light3D); // TODO
-	d.drawLine(1,1,width-3,1);
-	d.drawLine(1,1,1,height-3);
+	d.drawRect(0,0,width,height);
 
 	d.setFont(Font::getFont("menu"));
 	const int asc = Font::getFont("menu")->getAscent()+1;
 	const int height = Font::getFont("menu")->getHeight()+2;
-    int x = 3,cwidth = width-3-x;
-	int y = asc+3;
+	int x = 1,cwidth = width-1-x;
+	int y = asc+1;
 	int index = 0;
-    unsigned int coli = 0;
+	unsigned int coli = 0;
 
-    if (coli < colx.size()) {
-        x = colx[coli++];
-        cwidth = width-3-x;
-        if (coli < colx.size()) {
-            cwidth = colx[coli] - x;
-        }
-    }
+	if (coli < colx.size()) {
+		x = colx[coli++];
+		cwidth = width-1-x;
+		if (coli < colx.size()) {
+			cwidth = colx[coli] - x;
+		}
+	}
 
 	for (std::vector<String>::const_iterator i = items.begin(); i != items.end(); ++i) {
 		if ((*i).empty()) {
-			d.setColor(CurrentTheme.Shadow3D); // TODO
-			d.drawLine(x+1,y-asc+6,cwidth,y-asc+6);
-			d.setColor(CurrentTheme.Light3D); // TODO
-			d.drawLine(x+1,y-asc+7,cwidth,y-asc+7);
-			y += 12;
-        } else if (*i == "|") {
-            y = asc+3;
-            if (coli < colx.size()) {
-                x = colx[coli++];
-                cwidth = width-3-x;
-                if (coli < colx.size()) {
-                    cwidth = colx[coli] - x;
-                }
+			d.setColor(Color::Black); // TODO
+			d.drawLine(x,y-asc+3,cwidth,y-asc+3);
+			y += 3+1+3;
+		} else if (*i == "|") {
+			y = asc+1;
+			if (coli < colx.size()) {
+				x = colx[coli++];
+				cwidth = width-1-x;
+				if (coli < colx.size()) {
+					cwidth = colx[coli] - x;
+				}
 
-                d.setColor(CurrentTheme.Shadow3D); // TODO
-                d.drawLine(x-2,2,x-2,this->height-4);
-                d.setColor(CurrentTheme.Light3D); // TODO
-                d.drawLine(x-1,2,x-1,this->height-4);
-            }
-        } else {
+				d.setColor(Color::Black); // TODO
+				d.drawLine(x-1,1,x-1,this->height-2);
+			}
+		} else {
 			if (index == selected && hasFocus()) {
 				d.setColor(DefaultTheme.Highlight);
 				d.fillRect(x,y-asc,cwidth,height);
@@ -1671,7 +1656,7 @@ void Menu::paint(Drawable &d) const
 			} else {
 				d.setColor(DefaultTheme.MenuText);
 			}
-			d.drawText(x+17,y,(*i),false,0);
+			d.drawText(x+7,y,(*i),false,0);
 			y += height;
 		}
 		index++;
@@ -1682,39 +1667,38 @@ void Menubar::paint(Drawable &d) const
 {
 	const Font *f = Font::getFont("menu");
 
-	d.setColor(CurrentTheme.Light3D);
-	d.drawLine(0,height-1,width-1,height-1);
-	d.setColor(CurrentTheme.Shadow3D);
-	d.drawLine(0,height-2,width-1,height-2);
+	d.setColor(DefaultTheme.MenuBar);
+	d.fillRect(0, 0, width, height - 1);
 
-    d.setColor(DefaultTheme.MenuBar);
-    d.fillRect(0, 0, width - 12 /*TODO why?*/, 18);
-	d.gotoXY(7,f->getAscent()+2);
+	d.setColor(Color::Black);
+	d.gotoXY(0,height-1);
+	d.drawLine(width,height-1);
 
-	int index = 0;
+	int index = 0, x = 0;
+	d.gotoXY(x,f->getAscent()+2);
 	for (std::vector<Menu*>::const_iterator i = menus.begin(); i != menus.end(); ++i, ++index) {
+		const int w = f->getWidth((*i)->getName());
 		if (index == selected && (*i)->isVisible()) {
-			int w = f->getWidth((*i)->getName());
 			d.setColor(DefaultTheme.Highlight);
-			d.fillRect(d.getX()-7,0,w+14,height-2);
+			d.fillRect(x,0,w+14,height-2);
 			d.setColor(DefaultTheme.HighlightedText);
-			d.gotoXY(d.getX()+7,f->getAscent()+2);
 		} else {
 			d.setColor(DefaultTheme.MenuText);
 		}
+		d.gotoXY(x+7,f->getAscent()+2);
 		d.drawText((*i)->getName(),false);
-		d.gotoXY(d.getX()+14,f->getAscent()+2);
+		x += w+14;
 	}
 }
 
 bool Button::keyDown(const Key &key)
 {
 	switch (key.special) {
-	case Key::None:
-		if (key.character != ' ') return false;
-	case Key::Enter:
-		break;
-	default: return false;
+		case Key::None:
+			if (key.character != ' ') return false;
+		case Key::Enter:
+			break;
+		default: return false;
 	}
 	mouseDown(0,0,Left);
 	return true;
@@ -2519,6 +2503,8 @@ void WindowInWindow::paintAll(Drawable &d) const {
                 // black border
                 dscroll.setColor(vsl.disabled ? CurrentTheme.Shadow3D : Color::Black);
                 dscroll.drawRect(x,y,w,h);
+                dscroll.setColor(CurrentTheme.ButtonFiller); // NTS: Actually, scroll bar buttons are always gray regardless of theme
+                dscroll.fillRect(x+1,y+1,w-2,h-2);
 
                 // 3D outset style, 1 pixel inward each side, inside the black rectangle we just drew
                 if (vscroll_uparrowhold && vscroll_uparrowdown)
@@ -2541,6 +2527,8 @@ void WindowInWindow::paintAll(Drawable &d) const {
                 // black border
                 dscroll.setColor(vsl.disabled ? CurrentTheme.Shadow3D : Color::Black);
                 dscroll.drawRect(x,y,w,h);
+                dscroll.setColor(CurrentTheme.ButtonFiller); // NTS: Actually, scroll bar buttons are always gray regardless of theme
+                dscroll.fillRect(x+1,y+1,w-2,h-2);
 
                 // 3D outset style, 1 pixel inward each side, inside the black rectangle we just drew
                 if (vscroll_downarrowhold && vscroll_downarrowdown)

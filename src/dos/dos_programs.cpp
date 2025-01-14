@@ -47,6 +47,7 @@
 #include "dos_system.h"
 #include "dos_inc.h"
 #include "bios.h"
+#include "bitop.h"
 #include "inout.h"
 #include "dma.h"
 #include "bios_disk.h"
@@ -81,7 +82,7 @@ host_cnv_char_t *CodePageGuestToHost(const char *s);
 #endif
 #ifdef C_ICONV
 #include "iconvpp.hpp"
-typedef uint16_t test_char_t;
+typedef char16_t test_char_t;
 typedef std::basic_string<test_char_t> test_string;
 typedef std::basic_string<char> test_char;
 #endif
@@ -102,6 +103,9 @@ bool mountwarning = true;
 bool qmount = false;
 bool nowarn = false;
 bool CodePageHostToGuestUTF8(char *d/*CROSS_LEN*/,const char *s/*CROSS_LEN*/), CodePageHostToGuestUTF16(char *d/*CROSS_LEN*/,const uint16_t *s/*CROSS_LEN*/);
+inline bool CodePageHostToGuestUTF16(char *d/*CROSS_LEN*/,const char16_t *s/*CROSS_LEN*/) {
+    return CodePageHostToGuestUTF16(d, reinterpret_cast<const uint16_t *>(s));
+}
 extern bool systemmessagebox(char const * aTitle, char const * aMessage, char const * aDialogType, char const * aIconType, int aDefaultButton);
 extern bool addovl, addipx, addne2k, prepared, inshell, usecon, uao, loadlang, morelen, mountfro[26], mountiro[26], resetcolor, staycolors, printfont, notrycp, internal_program;
 extern bool clear_screen(), OpenGL_using(void), DOS_SetAnsiAttr(uint8_t attr), isDBCSCP();
@@ -554,24 +558,38 @@ void MenuBrowseCDImage(char drive, int num) {
     const char *lFilterPatterns[] = {"*.iso","*.cue","*.bin","*.chd","*.mdf","*.gog","*.ins","*.inst","*.ISO","*.CUE","*.BIN","*.CHD","*.MDF","*.GOG","*.INS","*.INST" };
     const char *lFilterDescription = "CD image files (*.iso, *.cue, *.bin, *.chd, *.mdf, *.gog, *.ins, *.inst)";
     lTheOpenFileName = tinyfd_openFileDialog("Select a CD image file","", sizeof(lFilterPatterns) / sizeof(lFilterPatterns[0]),lFilterPatterns,lFilterDescription,0);
-
+    bool isempty = std::string(Drives[drive - 'A']->GetInfo() + 9) == "empty";
     if (lTheOpenFileName) {
         isoDrive *cdrom = dynamic_cast<isoDrive*>(Drives[drive-'A']);
         DOS_Drive *newDrive = NULL;
+        int error = -1;
+        uint8_t mediaid = 0xF8;
         if (cdrom && dos_kernel_disabled) {
             cdrom->setFileName(lTheOpenFileName);
+            if(isempty) {
+                newDrive = new isoDrive(drive, lTheOpenFileName, mediaid, error, options);
+                if(error) {
+                    delete newDrive;
+                    systemmessagebox("Error", "Could not mount the selected CD image.", "ok", "error", 1);
+                    chdir(Temp_CurrentDir);
+                    return;
+                }
+                delete cdrom;
+                cdrom = dynamic_cast<isoDrive*>(newDrive);
+                Drives[drive - 'A'] = cdrom;
+            }
         } else {
-            uint8_t mediaid = 0xF8;
-            int error = -1;
             newDrive = new isoDrive(drive, lTheOpenFileName, mediaid, error, options);
             if (error) {
+                delete newDrive;
                 systemmessagebox("Error","Could not mount the selected CD image.","ok","error", 1);
                 chdir( Temp_CurrentDir );
                 return;
             }
             cdrom = dynamic_cast<isoDrive*>(newDrive);
+            Drives[drive - 'A'] = cdrom;
         }
-        if (cdrom) DriveManager::ChangeDisk(drive-'A', cdrom);
+        if ((!isempty || !dos_kernel_disabled) && cdrom) DriveManager::ChangeDisk(drive-'A', cdrom);
 	}
 	chdir( Temp_CurrentDir );
 #endif
@@ -3356,6 +3374,18 @@ const uint8_t freedos_mbr[] = {
 #include <winioctl.h>
 #endif
 
+static void lba2chs3(unsigned char *b3,uint32_t lba,const unsigned int gc,const unsigned int gh,const unsigned int gs) {
+	const unsigned int s = (unsigned int)(lba % (uint32_t)gs) + 1u; lba /= (uint32_t)gs;
+	const unsigned int h = (unsigned int)(lba % (uint32_t)gh);      lba /= (uint32_t)gh;
+	const unsigned int c = (unsigned int) lba;
+
+	(void)gc;
+
+	b3[0] = h;
+	b3[1] = s | ((c >> 8u) << 6u);		/* [7:6] cylinder bits 8-9 [5:0] sector */
+	b3[2] = c;
+}
+
 class IMGMAKE : public Program {
 public:
 #ifdef WIN32
@@ -3518,6 +3548,7 @@ restart_int:
 
     void Run(void) override {
         std::string disktype;
+        std::string label;
         std::string src;
         std::string filename;
         std::string dpath;
@@ -3526,6 +3557,7 @@ restart_int:
         int lbamode = -1;
         uint32_t c, h, s;
         uint64_t size = 0, sectors;
+        uint16_t alignment = 0; // if nonzero, try to align structures to this multiple of K (i.e. 4K sector alignment)
 
         if(control->SecureMode()) {
             WriteOut(MSG_Get("PROGRAM_CONFIG_SECURE_DISALLOW"));
@@ -3535,11 +3567,11 @@ restart_int:
             printHelp();
             return;
         }
-		if (cmd->FindExist("/examples")||cmd->FindExist("-examples")) {
-			resetcolor = true;
-			WriteOut(MSG_Get("PROGRAM_IMGMAKE_EXAMPLE"));
-			return;
-		}
+        if (cmd->FindExist("/examples")||cmd->FindExist("-examples")) {
+            resetcolor = true;
+            WriteOut(MSG_Get("PROGRAM_IMGMAKE_EXAMPLE"));
+            return;
+        }
 
 /*
         this stuff is too frustrating
@@ -3637,12 +3669,28 @@ restart_int:
             printHelp();
             return;
         }
-		std::transform(disktype.begin(), disktype.end(), disktype.begin(), ::tolower);
+        std::transform(disktype.begin(), disktype.end(), disktype.begin(), ::tolower);
+
+        // filesystem label
+        cmd->FindString("-label",label,true);
+
+        // alignment
+        if (cmd->FindString("-align",tmp,true)) {
+            const char *s = tmp.c_str();
+            alignment = (uint32_t)strtoul(s,(char**)(&s),0);
+            /* if 'K' follows, convert K to sectors */
+            if (*s == 'K' || *s == 'k') alignment *= (uint32_t)2u;
+
+            if (alignment == (uint32_t)0 || alignment > (uint32_t)2048/*1MB*/) {
+                WriteOut("Invalid alignment");
+                return;
+            }
+        }
 
         uint8_t mediadesc = 0xF8; // media descriptor byte; also used to differ fd and hd
         uint16_t root_ent = 512; // FAT root directory entries: 512 is for harddisks
         uint16_t disksize = 0;   // disk size of floppy images
-        uint32_t sect_per_fat=0; // allowable range: FAT12 1-12, FAT16 16-256, FAT32 512-2,097,152 sectors
+        uint32_t sect_per_fat = 0; // allowable range: FAT12 1-12, FAT16 16-256, FAT32 512-2,097,152 sectors
         uint16_t sectors_per_cluster = 0; // max limit: 128
         bool is_fd = false;
         if(disktype=="fd_160") {
@@ -3737,6 +3785,11 @@ restart_int:
                     return;
                 }
                 sectors = size / 512;
+
+                if (alignment != 0u) {
+                    sectors += (uint64_t)(alignment - 1u);
+                    sectors -= sectors % (uint64_t)alignment;
+                }
 
                 // Now that we finally have the proper size, figure out good CHS values
                 if (size > 0xFFFFFFFFull/*4GB*/) {
@@ -3880,11 +3933,24 @@ restart_int:
             uint32_t reserved_sectors = 1; /* 1 for the boot sector + BPB. FAT32 will require more */
             uint64_t vol_sectors = 0;
             uint8_t fat_copies = 2; /* number of copies of the FAT */
+            uint32_t partsector = 0;
             uint32_t fatlimitmin;
             uint32_t fatlimit;
             int8_t FAT = -1;
             bool spc_changed = false;
             bool rootent_changed = false;
+
+            /* Partition sector override */
+            if (cmd->FindString("-partofs",tmp,true)) {
+                partsector = atoi(tmp.c_str());
+                if (partsector == 0) {
+                    WriteOut("Invalid -partofs\n");
+                    fclose(f);
+                    unlink(temp_line.c_str());
+                    if (setdir) chdir(dirCur);
+                    return;
+                }
+            }
 
             /* FAT filesystem, user choice */
             if (cmd->FindString("-fat",tmp,true)) {
@@ -3946,12 +4012,37 @@ restart_int:
 
             /* decide partition placement */
             if (mediadesc == 0xF8) {
-                bootsect_pos = (int64_t)s;
-                vol_sectors = sectors - bootsect_pos;
+                if (partsector > (uint32_t)0)
+                    bootsect_pos = (int64_t)partsector;
+                else
+                    bootsect_pos = (int64_t)s;
             }
             else {
                 bootsect_pos = 0;
-                vol_sectors = sectors;
+            }
+
+            if (alignment != 0u) {
+                bootsect_pos += alignment - 1u;
+                bootsect_pos -= bootsect_pos % (int64_t)alignment;
+            }
+
+            if (sectors <= (uint64_t)bootsect_pos) {
+                WriteOut("Invalid bootsector position\n");
+                fclose(f);
+                unlink(temp_line.c_str());
+                if (setdir) chdir(dirCur);
+                return;
+            }
+            vol_sectors = sectors - (uint64_t)bootsect_pos;
+
+            if (alignment != 0u) {
+                if ((vol_sectors % alignment) != 0u) {
+                    WriteOut("Sanity check failed: Volume size not aligned\n");
+                    fclose(f);
+                    unlink(temp_line.c_str());
+                    if (setdir) chdir(dirCur);
+                    return;
+                }
             }
 
             /* auto-decide FAT system */
@@ -3991,6 +4082,11 @@ restart_int:
             if (FAT >= 32)
                 reserved_sectors = 32;
 
+            if (alignment != 0u) {
+                reserved_sectors += alignment - 1u;
+                reserved_sectors -= reserved_sectors % alignment;
+            }
+
             uint8_t sbuf[512];
             if(mediadesc == 0xF8) {
                 // is a harddisk: write MBR
@@ -3998,11 +4094,9 @@ restart_int:
                 // active partition
                 sbuf[0x1be]=0x80;
                 // start head - head 0 has the partition table, head 1 first partition
-                sbuf[0x1bf]=1;
                 // start sector with bits 8-9 of start cylinder in bits 6-7
-                sbuf[0x1c0]=1;
                 // start cylinder bits 0-7
-                sbuf[0x1c1]=0;
+                lba2chs3(sbuf+0x1bf,bootsect_pos,c,h,s);
                 // OS indicator
                 if (FAT < 32 && (bootsect_pos+vol_sectors) < 65536) { /* 32MB or smaller */
                     if (FAT >= 16)
@@ -4023,11 +4117,9 @@ restart_int:
                         sbuf[0x1c2]=0x0E; /* FAT12/FAT16 LBA */
                 }
                 // end head (0-based)
-                sbuf[0x1c3]= h-1;
                 // end sector with bits 8-9 of end cylinder (0-based) in bits 6-7
-                sbuf[0x1c4]=s|(((c-1)&0x300)>>2);
                 // end cylinder (0-based) bits 0-7
-                sbuf[0x1c5]=(c-1)&0xFF;
+                lba2chs3(sbuf+0x1c3,bootsect_pos+vol_sectors-1ul,c,h,s);
                 // sectors preceding partition1 (one head)
                 host_writed(&sbuf[0x1c6],(uint32_t)bootsect_pos);
                 // length of partition1, align to chs value
@@ -4104,6 +4196,19 @@ restart_int:
                     while ((vol_sectors/sectors_per_cluster) >= (tmp_fatlimit - 2u) && sectors_per_cluster < 0x80u) sectors_per_cluster <<= 1;
                 }
             }
+
+            /* if alignment is a power of 2, align sectors per cluster to it */
+            if (bitop::ispowerof2(alignment)) {
+                while (sectors_per_cluster < 0x80u && sectors_per_cluster < alignment) sectors_per_cluster <<= 1;
+            }
+
+            /* FAT12/FAT16 size the root directory so that it is aligned, which then aligns the data area following it */
+            if (alignment != 0u && FAT < 32) {
+                const uint32_t t_alignment = alignment * (512u / 32u); /* 512 bytes/sector, 32 bytes per dirent = number of root dirents per sector */
+                root_ent += t_alignment - 1;
+                root_ent -= root_ent % t_alignment;
+            }
+
             while (!is_fd && (vol_sectors/sectors_per_cluster) >= (fatlimit - 2u) && sectors_per_cluster < 0x80u) sectors_per_cluster <<= 1;
             sbuf[SecPerClus]=(uint8_t)sectors_per_cluster;
             // reserved sectors
@@ -4126,7 +4231,29 @@ restart_int:
             if (FAT >= 32)          sect_per_fat = ((clusters*4u)+511u)/512u;
             else if (FAT >= 16)     sect_per_fat = ((clusters*2u)+511u)/512u;
             // Use standard sect_per_fat values for standard floppy images, otherwise it may required to be adjusted
-            else if (!is_fd || (is_fd && (rootent_changed || (fat_copies != 2)))) sect_per_fat = ((((clusters+1u)/2u)*3u)+511u)/512u;
+            else if (!is_fd || sect_per_fat == 0 || (is_fd && (rootent_changed || (fat_copies != 2)))) sect_per_fat = ((((clusters+1u)/2u)*3u)+511u)/512u;
+
+            if (alignment != 0u) {
+                if (alignment % fat_copies) {
+                    sect_per_fat += alignment - 1u;
+                    sect_per_fat -= sect_per_fat % alignment;
+                }
+                else {
+                    const uint32_t t_alignment = alignment / fat_copies; /* we could align sect_per_fat based on ALL copies of the FAT table */
+                    sect_per_fat += t_alignment - 1u;
+                    sect_per_fat -= sect_per_fat % t_alignment;
+                }
+            }
+
+            if (alignment != 0u) {
+                if ((((uint64_t)sect_per_fat * (uint64_t)fat_copies) % (uint64_t)alignment) != 0u) {
+                    WriteOut("Sanity check failed: FAT tables not aligned\n");
+                    fclose(f);
+                    unlink(temp_line.c_str());
+                    if (setdir) chdir(dirCur);
+                    return;
+                }
+            }
 
             if (FAT < 32 && sect_per_fat > 256u) {
                 WriteOut("Error: Generated filesystem has more than 256 sectors per FAT and is not FAT32\n");
@@ -4136,10 +4263,24 @@ restart_int:
                 return;
             }
 
+            uint32_t root_ent_sec = 0;
             uint64_t data_area = vol_sectors - reserved_sectors - (sect_per_fat * fat_copies);
-            if (FAT < 32) data_area -= ((root_ent * 32u) + 511u) / 512u;
+            if (FAT < 32) {
+                root_ent_sec = ((root_ent * 32u) + 511u) / 512u;
+                data_area -= root_ent_sec;
+            }
             clusters = data_area / sectors_per_cluster;
             if (FAT < 32) host_writew(&sbuf[FATSz16],(uint16_t)sect_per_fat);
+
+            if (alignment != 0u) {
+                if ((root_ent_sec % alignment) != 0u) {
+                    WriteOut("Sanity check failed: Volume size not aligned\n");
+                    fclose(f);
+                    unlink(temp_line.c_str());
+                    if (setdir) chdir(dirCur);
+                    return;
+                }
+            }
 
             /* Too many or to few clusters can foul up FAT12/FAT16/FAT32 detection and cause corruption! */
             if ((clusters+2u) < fatlimitmin) {
@@ -4163,6 +4304,23 @@ restart_int:
                 // sectors (32MB or larger or FAT32)
                 if (adj_vol_sectors >= 65536ul) host_writed(&sbuf[TotSec32],adj_vol_sectors);
                 else host_writed(&sbuf[TotSec32],0);
+            }
+
+            const unsigned long long first_cluster =
+                (unsigned long long)bootsect_pos + reserved_sectors +
+                ((unsigned long long)sect_per_fat * (unsigned long long)fat_copies) +
+                (unsigned long long)root_ent_sec;
+
+            /* do not validate alignment of data area, because some of the fd and hd presets might
+             * violate it, but certainly make sure that the first cluster is aligned */
+            if (alignment != 0u) {
+                if ((first_cluster % (unsigned long long)alignment) != 0ull) {
+                    WriteOut("Sanity check failed: First cluster not aligned\n");
+                    fclose(f);
+                    unlink(temp_line.c_str());
+                    if (setdir) chdir(dirCur);
+                    return;
+                }
             }
 
             // sectors per track
@@ -4237,6 +4395,19 @@ restart_int:
                 memcpy(sbuf+BootCode,this_is_not_a_bootable_partition+0x3E,BootSign - BootCode);
             }
 
+            // write label
+            if (!label.empty()) {
+                const char *s = label.c_str();
+                unsigned int i;
+                char *d;
+
+                if (FAT >= 32) d = (char*)sbuf + VolLab32;
+                else d = (char*)sbuf + VolLab;
+
+                for (i=0;i < 11 && *s;i++) *d++ = *s++;
+                for (   ;i < 11;      i++) *d++ = ' ';
+            }
+
             // write the boot sector
             if(disktype == "vhd") {
                 vhd->Write_AbsoluteSector(bootsect_pos, sbuf);
@@ -4299,6 +4470,36 @@ restart_int:
                 }
                 else {
                     vhd->Write_AbsoluteSector((unsigned long long)bootsect_pos + reserved_sectors + (unsigned long long)sect_per_fat * (unsigned long long)fat, sbuf);
+                }
+            }
+
+            // write label in root directory, as first entry
+            if (!label.empty()) {
+                const char *s = label.c_str();
+                unsigned int i;
+                char *d;
+
+                unsigned long long sec;
+
+                /* FAT12/FAT16: This points at the root directory area.
+                 * FAT32: This points at the root directory only because this code constructed the root directory allocation chain
+                 *        starting at cluster 2, which is the first cluster of the data area. */
+                sec = (unsigned long long)bootsect_pos + reserved_sectors +
+                      ((unsigned long long)sect_per_fat * (unsigned long long)fat_copies);
+
+                memset(sbuf,0,512);
+
+                d = (char*)sbuf;
+                for (i=0;i < 11 && *s;i++) *d++ = *s++;
+                for (   ;i < 11;      i++) *d++ = ' ';
+                sbuf[11] = 0x08; /* volume label */
+
+                if(disktype != "vhd") {
+                    fseeko64(f, (off_t)(sec * 512ull), SEEK_SET);
+                    fwrite(&sbuf, 512, 1, f);
+                }
+                else {
+                    vhd->Write_AbsoluteSector(sec, sbuf);
                 }
             }
 
@@ -6763,7 +6964,12 @@ class IMGMOUNT : public Program {
 					emd->diskSizeK = ((sizes[0]*sizes[1]*sizes[2]*sizes[3])+512)/1024;
 					emd->UpdateFloppyType();
 				}
-				LOG_MSG("Mounted empty C/H/S/sz %u/%u/%u/%u %uKB",emd->cylinders,emd->heads,emd->sectors,emd->sector_size,emd->diskSizeK);
+				LOG_MSG("Mounted empty C/H/S/sz %u/%u/%u/%u %uKB",
+					(unsigned int)emd->cylinders,
+					(unsigned int)emd->heads,
+					(unsigned int)emd->sectors,
+					(unsigned int)emd->sector_size,
+					(unsigned int)emd->diskSizeK);
 				return emd;
 			}
 
@@ -8954,13 +9160,15 @@ void START_ProgramStart(Program **make)
 
 #define MAX_FLAGS 512
 char *g_flagged_files[MAX_FLAGS]; //global array to hold flagged files
-int my_minizip(char ** savefile, char ** savefile2, char* savename);
+int my_minizip(bool compress, char ** savefile, char ** savefile2, char* savename=NULL);
 int my_miniunz(char ** savefile, const char * savefile2, const char * savedir, char* savename);
 int flagged_backup(char *zip)
 {
     char zipfile[CROSS_LEN], ziptmp[CROSS_LEN+4];
     int i;
     int ret = 0;
+
+    bool compresssaveparts = static_cast<Section_prop *>(control->GetSection("dosbox"))->Get_bool("compresssaveparts");
 
     strcpy(zipfile, zip);
     strcpy(ziptmp, zip);
@@ -8996,7 +9204,7 @@ int flagged_backup(char *zip)
             std::ofstream outfile (ziptmp, std::ofstream::binary);
             outfile << out;
             outfile.close();
-            my_minizip((char**)zipfile, (char**)ziptmp, g_flagged_files[i]);
+            my_minizip(compresssaveparts, (char**)zipfile, (char**)ziptmp, g_flagged_files[i]);
             ret++;
         }
     }
@@ -9804,20 +10012,18 @@ void DOS_SetupPrograms(void) {
         "    \033[33;1mFloppy disk templates\033[0m (names resolve to floppy sizes in KB or fd=fd_1440):\n"
         "     fd_160 fd_180 fd_200 fd_320 fd_360 fd_400 fd_720 fd_1200 fd_1440 fd_2880\n"
         "    \033[33;1mHard disk templates:\033[0m\n"
-        "     hd_250: 250MB image, hd_520: 520MB image, hd_1gig: 1GB image\n"
-        "     hd_2gig: 2GB image, hd_4gig: 4GB image, hd_8gig: 8GB image\n"
-        "     hd_st251: 40MB image, hd_st225: 20MB image (geometry from old drives)\n"
-        "    \033[33;1mCustom hard disk images:\033[0m hd vhd (requires -size or -chs)\n"
+        "     hd_250: 250MB, hd_520: 520MB, hd_1gig: 1GB, hd_2gig: 2GB, hd_4gig: 4GB,\n"
+        "     hd_8gig: 8GB, hd_st251: 40MB, hd_st225: 20MB (geometry from old drives)\n"
+        "    \033[33;1mCustom hard disks:\033[0m hd vhd (requires -size or -chs)\n"
         "  -size: Size of a custom hard disk image in MB (vhd: up to 2088960).\n"
         "  -chs: Disk geometry in cylinders(1-1023),heads(1-255),sectors(1-63).\n"
         "  -nofs: Add this parameter if a blank image should be created.\n"
-        "  -force: Force to overwrite the existing image file.\n"
+        "  -force: Overwrite existing image file. -chs / -lba: Choose C/H/S or LBA.\n"
         "  -bat: Create a .bat file with the IMGMOUNT command required for this image.\n"
-        "  -chs / -lba: Use partition code for FAT filesystem for C/H/S or LBA geometry.\n"
-        "  -fat: FAT filesystem type (12, 16, or 32).\n"
-        "  -spc: Sectors per cluster override. Must be a power of 2.\n"
-        "  -fatcopies: Override number of FAT table copies.\n"
-        "  -rootdir: Size of root directory in entries. Ignored for FAT32.\n"
+        "  -fat: Type (12, 16, or 32). -fatcopies: FAT table copies.\n"
+        "  -spc: Sectors per cluster (must be power of 2). -label Drive label.\n"
+        "  -rootdir: Root directory entries. -partofs: Start of hd partition.\n"
+        "  -align: Align filesystem structures. In sectors, or add 'K' suffix for KB.\n"
 #ifdef WIN32
         "  -source: drive letter - if specified the image is read from a floppy disk.\n"
         "  -retries: how often to retry when attempting to read a bad floppy disk(1-99).\n"

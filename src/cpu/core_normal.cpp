@@ -154,8 +154,10 @@ static INLINE uint32_t Fetchd() {
 #define EALookupTable (core.ea_table)
 
 Bits CPU_Core_Normal_Run(void) {
-    if (CPU_Cycles <= 0)
-	    return CBRET_NONE;
+	if (CPU_Cycles <= 0)
+		return CBRET_NONE;
+
+	const Bitu init_cycles = CPU_Cycles;
 
 	while (CPU_Cycles-->0) {
 		LOADIP;
@@ -209,6 +211,7 @@ restart_opcode:
 		}
 		SAVEIP;
 	}
+decode_stop_at_instruction:
 	FillFlags();
 	return CBRET_NONE;
 decode_end:

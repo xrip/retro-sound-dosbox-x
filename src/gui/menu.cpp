@@ -124,10 +124,10 @@ static const char *def_menu__toplevel[] =
     "VideoMenu",
     "SoundMenu",
     "DOSMenu",
+    "DriveMenu",
 #if !defined(C_EMSCRIPTEN)
     "CaptureMenu",
 #endif
-    "DriveMenu",
 #if C_DEBUG
     "DebugMenu",
 #endif
@@ -263,7 +263,7 @@ static const char *def_menu_cpu_speed[] =
     "cpu586-120",
     "cpu586-133",
     "cpu586-166",
-    "cpuak6-166",
+    "cpu586-200",
     "cpuak6-200",
     "cpuak6-300",
     "cpuath-600",
@@ -709,9 +709,9 @@ static const char *def_menu_capture[] =
     "mapper_capnetrf",
     "--",
 #endif
-    "saveoptionmenu",
     "mapper_savestate",
     "mapper_loadstate",
+    "saveoptionmenu",
     "saveslotmenu",
     "autosavecfg",
     "browsesavefile",
@@ -860,7 +860,7 @@ static const char* def_menu_help_debug[] =
 static const char *def_menu_help[] =
 {
     "help_intro",
-    "HelpCommandMenu",
+    "help_about",
 #if !defined(HX_DOS)
     "--",
     "help_homepage",
@@ -880,7 +880,7 @@ static const char *def_menu_help[] =
 #if C_PCAP || C_PRINTER && defined(WIN32) || !C_DEBUG && !defined(MACOSX) && !defined(LINUX) && !defined(HX_DOS) && !defined(C_EMSCRIPTEN)
     "--",
 #endif
-    "help_about",
+    "HelpCommandMenu",
     NULL
 };
 
@@ -906,7 +906,7 @@ DOSBoxMenu::displaylist::displaylist() {
 
 DOSBoxMenu::displaylist::~displaylist() {
 }
-        
+
 bool DOSBoxMenu::item_exists(const std::string &name) {
     const auto i = name_map.find(name);
 
@@ -1538,7 +1538,7 @@ void ConstructSubMenu(DOSBoxMenu::item_handle_t item_id, const char * const * li
         const char *ref = list[i];
 
         /* NTS: This code calls mainMenu.get_item(item_id) every iteration.
-         *      
+         *
          *      This seemingly inefficient method of populating the display
          *      list is REQUIRED because DOSBoxMenu::item& is a reference
          *      to a std::vector, and the reference becomes invalid when
@@ -2242,7 +2242,7 @@ void BrowseFolder( char drive , std::string drive_type ) {
 void mem_conf(std::string memtype, int option) {
     std::string tmp;
     Section* sec = control->GetSection("dos");
-    Section_prop * section=static_cast<Section_prop *>(sec); 
+    Section_prop * section=static_cast<Section_prop *>(sec);
     if (!option) {
         tmp = section->Get_bool(memtype) ? "false" : "true";
     } else {
@@ -2278,7 +2278,7 @@ umount:
         switch (DriveManager::UnmountDrive(i_drive-'A')) {
         case 0:
             Drives[i_drive-'A'] = 0;
-            if(i_drive-'A' == DOS_GetDefaultDrive()) 
+            if(i_drive-'A' == DOS_GetDefaultDrive())
                 DOS_SetDrive(toupper('Z') - 'A');
             LOG_MSG("GUI:Drive %c has successfully been removed.",i_drive); break;
         case 1:

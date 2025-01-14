@@ -1632,6 +1632,9 @@ void DOSBOX_SetupConfigSections(void) {
     const char* irqhandler[] = {
         "", "simple", "cooperative_2nd", nullptr };
 
+    const char* pseopts[] = {
+        "auto", "none", "pse", "pse36", "pse40", "true", "false", nullptr };
+
     /* Setup all the different modules making up DOSBox-X */
     const char* machines[] = {
         "mda",
@@ -1735,8 +1738,19 @@ void DOSBOX_SetupConfigSections(void) {
                       "You can set code page either in the language file or with \"country\" setting in [config] section.");
     Pstring->SetBasic(true);
 
-    Pstring = secprop->Add_path("title",Property::Changeable::Always,"");
+    Pstring = secprop->Add_string("title",Property::Changeable::Always,"");
     Pstring->Set_help("Additional text to place in the title bar of the window.");
+    Pstring->SetBasic(true);
+
+    Pstring = secprop->Add_string("logo text",Property::Changeable::Always,"");
+    Pstring->Set_help("Text to place at the bottom of the screen during the startup logo. Text will line wrap automatically.\n"
+                      "To explicitly break to the next line, put \\n in the string.");
+    Pstring->SetBasic(true);
+
+    Pstring = secprop->Add_string("logo",Property::Changeable::Always,"");
+    Pstring->Set_help("Location of PNG images to use in place of the DOSBox-X logo at startup.\n"
+                      "This is the path of the base file name. For example logo=subdir\\sets\\007\\logo\n"
+                      "with machine=vgaonly will use subdir\\sets\\007\\logo224x224.png as the logo.");
     Pstring->SetBasic(true);
 
     Pbool = secprop->Add_bool("fastbioslogo",Property::Changeable::OnlyAtStart,false);
@@ -2061,17 +2075,38 @@ void DOSBOX_SetupConfigSections(void) {
     Pint = secprop->Add_int("acpi reserved size", Property::Changeable::WhenIdle,0);
     Pint->Set_help("Amount of memory at top to reserve for ACPI structures and tables. Set to 0 for automatic assignment.");
 
+    // TODO: At some point we are going to REQUIRE the user to set this option to emulate a memsize option beyond
+    //       some threshhold, say, 4GB, or probably less, in order not to grind the system to a halt if insufficient
+    //       RAM is available. Better yet, require this option if it exceeds 50% of the total RAM installed on the system
+    //       (or for Windows, the available RAM allowed by your Windows license limit such as 32-bit Windows only using
+    //       3GB of your 4GB).
+    //
+    //       Normal DOSBox never has to worry about this as most forks limit memsize to 63MB or less, same as DOSBox SVN,
+    //       which is nothing on the typical modern desktop.
+    //
+    //       No tricks! This code will ensure the path is to a FILE, not a directory, block device, or worse.
+    Pstring = secprop->Add_path("memory file",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("If set, guest memory is memory-mapped from a file on disk, rather than allocated from memory.\n"
+                      "This option can help keep DOSBox-X from consuming too much RAM for large values of memsize.\n"
+                      "This option is required to emulate 4GB or more of RAM. The file will be created if it does not exist\n"
+                      "and it does not require any special maintenance or formatting.");
+    Pstring->SetBasic(true);
+
 #if defined(C_EMSCRIPTEN)
     Pint = secprop->Add_int("memsize", Property::Changeable::OnlyAtStart,4);
 #else
     Pint = secprop->Add_int("memsize", Property::Changeable::OnlyAtStart,16);
 #endif
-    Pint->SetMinMax(0,3584); // 3.5GB
+    Pint->SetMinMax(0,1048576); // 1TB (PSE-40)
     Pint->Set_help(
         "Amount of memory DOSBox-X has in megabytes.\n"
         "This value is best left at its default to avoid problems with some games,\n"
         "although other games and applications may require a higher value.\n"
-        "Programs that use 286 protected mode like Windows 3.0 in Standard Mode may crash with more than 15MB.");
+        "Programs that use 286 protected mode like Windows 3.0 in Standard Mode may crash with more than 15MB.\n"
+        "A memory file is required to emulate a memory size of 4GB or more.\n"
+        "The maximum value allowed is affected by the memalias setting which affects the maximum amount of memory CPU can access as a power of 2.\n"
+        "The maximum value is also affected by the CPU type. See DOSBox-X console and log file for details.\n"
+        "The maximum setting 1048576 represents 1TB and requires at least a Pentium II and PSE-40 emulation.");
     Pint->SetBasic(true);
 
     Pint = secprop->Add_int("memsizekb", Property::Changeable::OnlyAtStart,0);
@@ -2115,17 +2150,22 @@ void DOSBOX_SetupConfigSections(void) {
         "-1 means to use a reasonable default.");
 
     Pint = secprop->Add_int("memalias", Property::Changeable::WhenIdle,0);
-    Pint->SetMinMax(0,32);
+    Pint->SetMinMax(0,40);
     Pint->Set_help(
         "Memory aliasing emulation, in number of valid address bits.\n"
         "Many 386/486 class motherboards and processors prior to 1995\n"
-        "suffered from memory aliasing for various technical reasons. If the software you are\n"
-        "trying to run assumes aliasing, or otherwise plays cheap tricks with paging,\n"
-        "enabling this option can help. Note that enabling this option can cause slight performance degradation. Set to 0 to disable.\n"
+        "had memory aliases for various technical reasons such as having\n"
+	"less than 32 address bits on the CPU die.\n"
         "Recommended values when enabled:\n"
+        "    0: Pick a value automatically according to cputype.\n"
+        "       NOTE: Changing the cputype after initial startup will not change the auto setting i.e.\n"
+        "       starting with cputype=8086 will use a memalias of 20 even if you later change cputype to 386.\n"
         "    24: 16MB aliasing. Common on 386SX systems (CPU had 24 external address bits)\n"
         "        or 386DX and 486 systems where the CPU communicated directly with the ISA bus (A24-A31 tied off)\n"
-        "    26: 64MB aliasing. Some 486s had only 26 external address bits, some motherboards tied off A26-A31");
+        "    26: 64MB aliasing. Some 486s had only 26 external address bits, some motherboards tied off A26-A31\n"
+        "    32: 4GB aliasing. This is normal for most 486/Pentium and later systems and is the default for most values of cputype.\n"
+        "    36: 64GB aliasing. Recommended if you are emulating more than 3.5GB of RAM and Pentium Pro/II Page Size Extensions.\n"
+        "    40: 1TB aliasing. Recommended if you are emulating more than 63GB of RAM and Pentium Pro/II Page Size Extensions.");
 
     Pbool = secprop->Add_bool("nocachedir",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, MOUNT commands will mount with -nocachedir (disable directory caching) by default.");
@@ -2333,7 +2373,8 @@ void DOSBOX_SetupConfigSections(void) {
             "Appending 'prompt' will cause a confirmation message for forcing the scaler.\n"
             "To fit a scaler in the resolution used at full screen may require a border or side bars.\n"
             "To fill the screen entirely, depending on your hardware, a different scaler/fullresolution might work.\n"
-            "Scalers should work with most output options, but they are ignored for openglpp and TrueType font outputs.");
+            "Scalers should work with most output options, but they are ignored for openglpp and TrueType font outputs.\n"
+            "If you are using OpenGL/Direct3D output and a shader that requires it, set to hardware_none or hardware2x.");
     Pmulti->SetBasic(true);
     Pstring = Pmulti->GetSection()->Add_string("type",Property::Changeable::Always,"normal2x");
     Pstring->Set_values(scalers);
@@ -2552,102 +2593,102 @@ void DOSBOX_SetupConfigSections(void) {
     Pstring = secprop->Add_string("dosv",Property::Changeable::OnlyAtStart,"off");
     Pstring->Set_values(dosv_settings);
     Pstring->Set_help("Enable DOS/V emulation and specify which version to emulate. This option is intended for use with games or software\n"
-            "originating from East Asia (China, Japan, Korea) that use the double byte character set (DBCS) encodings and DOS/V extensions\n"
-            "to display Japanese (jp), Chinese (chs/cht/cn/tw), or Korean (ko) text. Note that enabling DOS/V replaces 80x25 text mode with\n"
-            "a EGA/VGA graphics mode that emulates text mode to display the characters and may be incompatible with non-Asian software that\n"
-            "assumes direct access to the text mode via segment 0xB800. For a general DOS environment with CJK support please disable DOS/V\n"
-            "emulation and use TrueType font (TTF) output with a CJK code page (932, 936, 949, 950) and TTF font with CJK characters instead.");
+                    "originating from East Asia (China, Japan, Korea) that use the double byte character set (DBCS) encodings and DOS/V extensions\n"
+                    "to display Japanese (jp), Chinese (chs/cht/cn/tw), or Korean (ko) text. Note that enabling DOS/V replaces 80x25 text mode with\n"
+                    "a EGA/VGA graphics mode that emulates text mode to display the characters and may be incompatible with non-Asian software that\n"
+                    "assumes direct access to the text mode via segment 0xB800. For a general DOS environment with CJK support please disable DOS/V\n"
+                    "emulation and use TrueType font (TTF) output with a CJK code page (932, 936, 949, 950) and TTF font with CJK characters instead.");
     Pstring->SetBasic(true);
 
-	Pbool = secprop->Add_bool("getsysfont",Property::Changeable::OnlyAtStart,true);
-	Pbool->Set_help("If enabled, DOSBox-X will try to get and use the system fonts on Windows and Linux platforms for the DOS/V emulation.\n"
+    Pbool = secprop->Add_bool("getsysfont",Property::Changeable::OnlyAtStart,true);
+    Pbool->Set_help("If enabled, DOSBox-X will try to get and use the system fonts on Windows and Linux platforms for the DOS/V emulation.\n"
                     "If this cannot be done, then DOSBox-X will try to use the internal Japanese DOS/V font, or you can specify a different font.");
     Pbool->SetBasic(true);
 
-	//For loading FONTX CJK fonts
-	Pstring = secprop->Add_path("fontxsbcs",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering SBCS characters (8x19) in DOS/V or JEGA mode. If not specified, the default one will be used.\n"
+    //For loading FONTX CJK fonts
+    Pstring = secprop->Add_path("fontxsbcs",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering SBCS characters (8x19) in DOS/V or JEGA mode. If not specified, the default one will be used.\n"
                     "Loading the ASC16 and ASCFONT.15 font files (from the UCDOS and ETen Chinese DOS systems) is also supported for the DOS/V mode.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("fontxsbcs16",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering SBCS characters (8x16) in DOS/V or JEGA mode. If not specified, the default one will be used.\n"
+    Pstring = secprop->Add_path("fontxsbcs16",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering SBCS characters (8x16) in DOS/V or JEGA mode. If not specified, the default one will be used.\n"
                     "Loading the ASC16 and ASCFONT.15 font files (from the UCDOS and ETen Chinese DOS systems) is also supported for the DOS/V mode.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("fontxsbcs24",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering SBCS characters (12x24) in DOS/V mode (with V-text). If not specified, the default one will be used.\n"
+    Pstring = secprop->Add_path("fontxsbcs24",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering SBCS characters (12x24) in DOS/V mode (with V-text). If not specified, the default one will be used.\n"
                     "Loading the ASC24 and ASCFONT.24? font files (the latter from the ETen Chinese DOS system) is also supported for the DOS/V mode.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("fontxdbcs",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering DBCS characters (16x16) in DOS/V or VGA/JEGA mode. If not specified, the default one will be used.\n"
+    Pstring = secprop->Add_path("fontxdbcs",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering DBCS characters (16x16) in DOS/V or VGA/JEGA mode. If not specified, the default one will be used.\n"
                     "Alternatively, you can load a BDF or PCF font file (16x16 or 15x15), such as the free bitmap fonts from WenQuanYi (https://wenq.org/).\n"
                     "For Simplified Chinese DOS/V, loading the HZK16 font file (https://github.com/aguegu/BitmapFont/tree/master/font) is also supported.\n"
                     "For Traditional Chinese DOS/V, loading the STDFONT.15 font file from the ETen Chinese DOS system is also supported.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("fontxdbcs14",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering DBCS characters (14x14) for Configuration Tool or EGA mode. If not specified, the default one will be used.\n"
+    Pstring = secprop->Add_path("fontxdbcs14",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering DBCS characters (14x14) for Configuration Tool or EGA mode. If not specified, the default one will be used.\n"
                     "Alternatively, you can load a BDF or PCF font file (14x14 or 15x15), such as the free bitmap fonts from WenQuanYi (https://wenq.org/).\n"
                     "For Simplified Chinese DOS/V, loading the HZK14 font file (https://github.com/aguegu/BitmapFont/tree/master/font) is also supported.\n"
                     "For Traditional Chinese DOS/V, loading the STDFONT.15 font file from the ETen Chinese DOS system is also supported.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("fontxdbcs24",Property::Changeable::OnlyAtStart,"");
-	Pstring->Set_help("FONTX2 file used to rendering DBCS characters (24x24) in DOS/V mode (with V-text and 24-pixel fonts enabled).\n"
+    Pstring = secprop->Add_path("fontxdbcs24",Property::Changeable::OnlyAtStart,"");
+    Pstring->Set_help("FONTX2 file used to rendering DBCS characters (24x24) in DOS/V mode (with V-text and 24-pixel fonts enabled).\n"
                     "For Simplified Chinese DOS/V, loading the HZK24? font file (https://github.com/aguegu/BitmapFont/tree/master/font) is also supported.\n"
                     "For Traditional Chinese DOS/V, loading the STDFONT.24 font file from the ETen Chinese DOS system is also supported.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_string("showdbcsnodosv",Property::Changeable::WhenIdle,"auto");
+    Pstring = secprop->Add_string("showdbcsnodosv",Property::Changeable::WhenIdle,"auto");
     Pstring->Set_values(truefalseautoopt);
-	Pstring->Set_help("Enables rendering of Chinese/Japanese/Korean characters for DBCS code pages in standard VGA and EGA machine types in non-DOS/V and non-TTF mode.\n"
-                      "DOS/V fonts will be used in such cases, which can be adjusted by the above config options (such as fontxdbcs, fontxdbcs14, and fontxdbcs24).\n"
-                      "Setting to \"auto\" enables Chinese/Japanese/Korean character rendering if a language file is loaded (or with \"autodbcs\" option set) in such cases.");
+    Pstring->Set_help("Enables rendering of Chinese/Japanese/Korean characters for DBCS code pages in standard VGA and EGA machine types in non-DOS/V and non-TTF mode.\n"
+                    "DOS/V fonts will be used in such cases, which can be adjusted by the above config options (such as fontxdbcs, fontxdbcs14, and fontxdbcs24).\n"
+                    "Setting to \"auto\" enables Chinese/Japanese/Korean character rendering if a language file is loaded (or with \"autodbcs\" option set) in such cases.");
     Pstring->SetBasic(true);
 
-	Pbool = secprop->Add_bool("yen",Property::Changeable::OnlyAtStart,false);
-	Pbool->Set_help("Enables the Japanese yen symbol at 5ch if it is found at 7fh in a custom SBCS font for the Japanese DOS/V or JEGA emulation.");
+    Pbool = secprop->Add_bool("yen",Property::Changeable::OnlyAtStart,false);
+    Pbool->Set_help("Enables the Japanese yen symbol at 5ch if it is found at 7fh in a custom SBCS font for the Japanese DOS/V or JEGA emulation.");
     Pbool->SetBasic(true);
 
     Pbool = secprop->Add_bool("del",Property::Changeable::WhenIdle,true);
     Pbool->Set_help("Maps the undefined del symbol (0x7F) to the next character (0x80) for the Japanese DOS/V and other Japanese mode emulations.");
 
-	const char* fepcontrol_settings[] = { "ias", "mskanji", "both", nullptr };
-	Pstring = secprop->Add_path("fepcontrol",Property::Changeable::OnlyAtStart,"both");
-	Pstring->Set_values(fepcontrol_settings);
-	Pstring->Set_help("FEP control API for the DOS/V emulation.");
+    const char* fepcontrol_settings[] = { "ias", "mskanji", "both", nullptr };
+    Pstring = secprop->Add_path("fepcontrol",Property::Changeable::OnlyAtStart,"both");
+    Pstring->Set_values(fepcontrol_settings);
+    Pstring->Set_help("FEP control API for the DOS/V emulation.");
     Pstring->SetBasic(true);
 
-	const char* vtext_settings[] = { "xga", "xga24", "sxga", "sxga24", "svga", nullptr };
-	Pstring = secprop->Add_path("vtext1",Property::Changeable::WhenIdle,"svga");
-	Pstring->Set_values(vtext_settings);
-	Pstring->Set_help("V-text screen mode 1 for the DOS/V emulation. Enter command \"VTEXT 1\" for this mode. Note that XGA/SXGA mode is only supported by the svga_s3trio and svga_et4000 machine types.");
+    const char* vtext_settings[] = { "xga", "xga24", "sxga", "sxga24", "svga", nullptr };
+    Pstring = secprop->Add_path("vtext1",Property::Changeable::WhenIdle,"svga");
+    Pstring->Set_values(vtext_settings);
+    Pstring->Set_help("V-text screen mode 1 for the DOS/V emulation. Enter command \"VTEXT 1\" for this mode. Note that XGA/SXGA mode is only supported by the svga_s3trio and svga_et4000 machine types.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_path("vtext2",Property::Changeable::WhenIdle,"xga");
-	Pstring->Set_values(vtext_settings);
-	Pstring->Set_help("V-text screen mode 2 for the DOS/V emulation. Enter command \"VTEXT 2\" for this mode. Note that XGA/SXGA mode is only supported by the svga_s3trio and svga_et4000 machine types.");
+    Pstring = secprop->Add_path("vtext2",Property::Changeable::WhenIdle,"xga");
+    Pstring->Set_values(vtext_settings);
+    Pstring->Set_help("V-text screen mode 2 for the DOS/V emulation. Enter command \"VTEXT 2\" for this mode. Note that XGA/SXGA mode is only supported by the svga_s3trio and svga_et4000 machine types.");
     Pstring->SetBasic(true);
 
-	Pbool = secprop->Add_bool("use20pixelfont",Property::Changeable::OnlyAtStart,false);
-	Pbool->Set_help("Enables the 20 pixel font to be used instead of the 24 pixel system font for the Japanese DOS/V emulation (with V-text enabled).");
+    Pbool = secprop->Add_bool("use20pixelfont",Property::Changeable::OnlyAtStart,false);
+    Pbool->Set_help("Enables the 20 pixel font to be used instead of the 24 pixel system font for the Japanese DOS/V emulation (with V-text enabled).");
     Pbool->SetBasic(true);
 
-	Pstring = secprop->Add_string("j3100",Property::Changeable::OnlyAtStart,"off");
-	Pstring->Set_values(j3100_settings);
-	Pstring->Set_help("With the setting dosv=jp and a non-off value of this option, the Toshiba J-3100 machine will be emulated with DCGA support.\n"
-                    "Setting to \"on\" or \"auto\" starts J-3100 automatically, and with the setting \"manual\" you can enter J-3100 mode with DCGA command.");
+    Pstring = secprop->Add_string("j3100",Property::Changeable::OnlyAtStart,"off");
+    Pstring->Set_values(j3100_settings);
+    Pstring->Set_help("With the setting dosv=jp and a non-off value of this option, the Toshiba J-3100 machine will be emulated with DCGA support.\n"
+                      "Setting to \"on\" or \"auto\" starts J-3100 automatically, and with the setting \"manual\" you can enter J-3100 mode with DCGA command.");
     Pstring->SetBasic(true);
 
-	Pstring = secprop->Add_string("j3100type",Property::Changeable::OnlyAtStart,"default");
-	Pstring->Set_values(j3100_types);
-	Pstring->Set_help("Specifies the Toshiba J-3100 machine type if J-3100 mode is enabled. The color palette will be changed with different machine types.");
+    Pstring = secprop->Add_string("j3100type",Property::Changeable::OnlyAtStart,"default");
+    Pstring->Set_values(j3100_types);
+    Pstring->Set_help("Specifies the Toshiba J-3100 machine type if J-3100 mode is enabled. The color palette will be changed with different machine types.");
     Pstring->SetBasic(true);
 
-	Pbool = secprop->Add_bool("j3100colorscroll",Property::Changeable::WhenIdle,false);
-	Pbool->Set_help("Specifies that the color display can be used for scrolling, which is currently incompatible with for example the J-3100 version of the SimCity game.\n"
+    Pbool = secprop->Add_bool("j3100colorscroll",Property::Changeable::WhenIdle,false);
+    Pbool->Set_help("Specifies that the color display can be used for scrolling, which is currently incompatible with for example the J-3100 version of the SimCity game.\n"
                     "The VGA version of the Toshiba Windows 3.1 works fine with the \"false\" value of this setting, whereas its CGA/EGA version requires a \"true\" value for this.");
     Pbool->SetBasic(true);
 
@@ -2673,6 +2714,11 @@ void DOSBOX_SetupConfigSections(void) {
             "If your game is not sensitive to VGA RAM I/O speed, then turning on this option\n"
             "will do nothing but cause a significant drop in frame rate which is probably not\n"
             "what you want. Recommended values -1, 0 to 2000.");
+
+    Pbool = secprop->Add_bool("lfb vmemdelay",Property::Changeable::OnlyAtStart,false);
+    Pbool->Set_help("Set this option to true if you need vmemdelay to apply to SVGA and linear framebuffer video modes as well.\n"
+                    "This affects anything in which DOSBox-X emulates as a linear framebuffer including MDA/Hercules and PC-98 LFB.\n"
+                    "Note that this option may slightly reduce emulator performance with such modes.");
 
     // NOTE: This will be revised as I test the DOSLIB code against more VGA/SVGA hardware!
     Pstring = secprop->Add_string("prevent capture",Property::Changeable::WhenIdle,"");
@@ -3123,12 +3169,21 @@ void DOSBOX_SetupConfigSections(void) {
     Pbool->Set_help("Allow RDMSR/WRMSR instructions. This option is only meaningful when cputype=pentium.\n"
             "WARNING: Leaving this option enabled while installing Windows 95/98/ME can cause crashes.");
 
+    Pstring = secprop->Add_string("enable pse",Property::Changeable::Always,"auto");
+    Pstring->Set_values(pseopts);
+    Pstring->Set_help("Allow PSE (Page Size Extensions) to paging.\n"
+                    "none=Do not enable PSE\n"
+                    "auto=Controlled by cpu type\n"
+                    "pse=Basic PSE\n"
+                    "pse36=PSE with 36-bit addressing\n"
+                    "pse40=PSE with 40-bit addressing");
+
     Pbool = secprop->Add_bool("enable cmpxchg8b",Property::Changeable::Always,true);
     Pbool->Set_help("Enable Pentium CMPXCHG8B instruction. Enable this explicitly if using software that uses this instruction.\n"
             "You must enable this option to run Windows ME because portions of the kernel rely on this instruction.");
 
     Pbool = secprop->Add_bool("enable syscall",Property::Changeable::Always,true);
-    Pbool->Set_help("Allow SYSENTER/SYSEXIT instructions. This option is only meaningful when cputype=pentium_ii.\n");
+    Pbool->Set_help("Allow SYSENTER/SYSEXIT instructions. This option is only meaningful when is cputype=pentium_ii or higher.\n");
 
     Pbool = secprop->Add_bool("ignore undefined msr",Property::Changeable::Always,false);
     Pbool->Set_help("Ignore RDMSR/WRMSR on undefined registers. Normally the CPU will fire an Invalid Opcode exception in that case.\n"
@@ -3493,6 +3548,12 @@ void DOSBOX_SetupConfigSections(void) {
     Pint->SetBasic(true);
 
     secprop=control->AddSection_prop("midi",&Null_Init,true);//done
+
+    Pbool = secprop->Add_bool("roland gs sysex",Property::Changeable::OnlyAtStart,true);
+    Pbool->Set_help("Listen for and handle some Roland GS System Exclusive messages, such as GS Reset and Master Volume.\n"
+                    "This is needed for PC-98 games that have hanging/stuck MIDI note problems because they rely on these\n"
+                    "messages to reset the synth rather than using standard MIDI commands.");
+    Pbool->SetBasic(false);
 
     Pstring = secprop->Add_string("mpu401",Property::Changeable::WhenIdle,"intelligent");
     Pstring->Set_values(mputypes);
@@ -4000,6 +4061,9 @@ void DOSBOX_SetupConfigSections(void) {
                       "If auto, automatically choose based on other settings such as GUS type.\n"
                       "This setting may be needed for DOS demoscene entries that assume aliasing behavior such as Out of Control by Contract.");
     Pstring->SetBasic(true);
+
+    Pbool = secprop->Add_bool("warn on out of bounds dram access",Property::Changeable::WhenIdle,false);
+    Pbool->Set_help("Controls whether attempts to access GUS DRAM beyond the 1MB maximum supported by the card are logged to the log file as a warning.");
 
     Pbool = secprop->Add_bool("autoamp",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, GF1 output will reduce in volume automatically if the sum of all channels exceeds full volume.\n"
@@ -4820,6 +4884,11 @@ void DOSBOX_SetupConfigSections(void) {
     Pbool->Set_help("If set, keep private DOS segment in upper memory block, usually segment 0xC800 (Mainline DOSBox behavior)\n"
             "If clear, place private DOS segment at the base of system memory (just below the MCB)");
 
+    Pbool = secprop->Add_bool("private area write protect",Property::Changeable::WhenIdle,false);
+    Pbool->Set_help("If set, prevent the guest from writing to the DOSBox private area. The emulator itself can still write to it, of course.\n"
+                    "Some DOS games have sloppy video routines that can spill over and corrupt the private area and cause problems.\n"
+                    "This option when set can prevent that errant game from causing crashes.");
+
     Pbool = secprop->Add_bool("quick reboot",Property::Changeable::WhenIdle,false);
     Pbool->Set_help("If set, the DOS restart call will reboot the emulated DOS (integrated DOS or guest DOS) instead of the virtual machine.\n");
     Pbool->SetBasic(true);
@@ -4933,6 +5002,13 @@ void DOSBOX_SetupConfigSections(void) {
                       "x=spec, y=spec\n"
                       "spec:   <number>    position adjust, can be positive or negative\n"
                       "        max-excess  if game sets maximum larger than int33 max x/y, adjust the position forward by the difference");
+
+    Pint = secprop->Add_int("int33 mickey threshold",Property::Changeable::WhenIdle,1);
+    Pint->Set_help("The smallest amount of mouse motion that will be reported to the guest. Motion below this amount is buffered until the threshold is met.\n"
+                   "Some DOS programs do not properly respond to small mouse movements causing effects like a sluggish cursor or cursor drift.\n"
+                   "Increase this option to the smallest value that achieves natural feeling motion.\n"
+                   "- Ultima Underworld: Use 2");
+    Pint->SetMinMax(1,16);
 
     Pint = secprop->Add_int("mouse report rate",Property::Changeable::WhenIdle,0);
     Pint->Set_help("Mouse reporting rate, or 0 for auto. This affects how often mouse events are reported to the guest through the mouse interrupt.\n"

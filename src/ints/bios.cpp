@@ -25,6 +25,7 @@
 #include "regs.h"
 #include "timer.h"
 #include "cpu.h"
+#include "bitop.h"
 #include "callback.h"
 #include "inout.h"
 #include "pic.h"
@@ -54,6 +55,10 @@ extern bool PS1AudioCard;
 #include <sys/stat.h>
 #include "version_string.h"
 
+#if C_LIBPNG
+#include <png.h>
+#endif
+
 #if defined(DB_HAVE_CLOCK_GETTIME) && ! defined(WIN32)
 //time.h is already included
 #else
@@ -75,6 +80,23 @@ extern bool PS1AudioCard;
 # define S_ISREG(x) ((x & S_IFREG) == S_IFREG)
 #endif
 
+struct BIOS_E280_entry {
+	uint64_t	base = 0;
+	uint64_t	length = 0;
+	uint32_t	type = 0;
+	uint32_t	acpi_ext_addr = 0;
+};
+
+#define MAX_E280	16
+static BIOS_E280_entry	E280_table[MAX_E280];
+static unsigned int	E280_table_entries = 0;
+
+bool VGA_InitBiosLogo(unsigned int w,unsigned int h,unsigned int x,unsigned int y);
+void VGA_WriteBiosLogoBMP(unsigned int y,unsigned char *scanline,unsigned int w);
+void VGA_WriteBiosLogoPalette(unsigned int start,unsigned int count,unsigned char *rgb);
+void VGA_FreeBiosLogo(void);
+void VGA_ShowBIOSLogo(void);
+
 extern bool ega200;
 
 unsigned char ACPI_ENABLE_CMD = 0xA1;
@@ -83,6 +105,8 @@ unsigned int ACPI_IO_BASE = 0x820;
 unsigned int ACPI_PM1A_EVT_BLK = 0x820;
 unsigned int ACPI_PM1A_CNT_BLK = 0x824;
 unsigned int ACPI_PM_TMR_BLK = 0x830;
+/* debug region 0x840-0x84F */
+unsigned int ACPI_DEBUG_IO = 0x840;
 
 std::string ibm_rom_basic;
 size_t ibm_rom_basic_size = 0;
@@ -112,6 +136,7 @@ bool pc98_timestamp5c = true; // port 5ch and 5eh "time stamp/hardware wait"
 uint32_t Keyb_ig_status();
 bool VM_Boot_DOSBox_Kernel();
 uint32_t MEM_get_address_bits();
+uint32_t MEM_get_address_bits4GB();
 Bitu bios_post_parport_count();
 Bitu bios_post_comport_count();
 void pc98_update_cpu_page_ptr(void);
@@ -157,6 +182,34 @@ unsigned int reset_post_delay = 0;
 
 Bitu call_irq_default = 0;
 uint16_t biosConfigSeg=0;
+
+static constexpr unsigned int ACPI_PMTIMER_CLOCK_RATE = 3579545; /* 3.579545MHz */
+
+pic_tickindex_t ACPI_PMTIMER_BASE_TIME = 0;
+uint32_t ACPI_PMTIMER_BASE_COUNT = 0;
+uint32_t ACPI_PMTIMER_MASK = 0xFFFFFFu; /* 24-bit mode */
+
+uint32_t ACPI_PMTIMER(void) {
+	pic_tickindex_t pt = PIC_FullIndex() - ACPI_PMTIMER_BASE_TIME;
+	uint32_t ct = (uint32_t)((pt * ACPI_PMTIMER_CLOCK_RATE) / 1000.0);
+	return ct;
+}
+
+void ACPI_PMTIMER_Event(Bitu /*val*/);
+void ACPI_PMTIMER_ScheduleNext(void) {
+	const uint32_t now_ct = ACPI_PMTIMER() & ACPI_PMTIMER_MASK;
+	const uint32_t next_delay_ct = (ACPI_PMTIMER_MASK + 1u) - now_ct;
+	const pic_tickindex_t delay = (1000.0 * next_delay_ct) / (pic_tickindex_t)ACPI_PMTIMER_CLOCK_RATE;
+
+	LOG(LOG_MISC,LOG_DEBUG)("ACPI PM TIMER SCHEDULE: now=0x%x next=0x%x delay=%.3f",now_ct,next_delay_ct,(double)delay);
+	PIC_AddEvent(ACPI_PMTIMER_Event,delay);
+}
+
+void ACPI_PMTIMER_CHECK(void) { /* please don't call this often */
+	PIC_RemoveEvents(ACPI_PMTIMER_Event);
+	LOG(LOG_MISC,LOG_DEBUG)("ACPI PM TIMER CHECK");
+	ACPI_PMTIMER_ScheduleNext();
+}
 
 Bitu BIOS_PC98_KEYBOARD_TRANSLATION_LOCATION = ~0u;
 Bitu BIOS_DEFAULT_IRQ0_LOCATION = ~0u;       // (RealMake(0xf000,0xfea5))
@@ -234,9 +287,25 @@ static void ACPI_SCI_Check(void) {
 
 void ACPI_PowerButtonEvent(void) {
 	if (ACPI_SCI_EN) {
-		ACPI_PM1_Status |= ACPI_PM1_Enable_PWRBTN_EN;
+		if (!(ACPI_PM1_Status & ACPI_PM1_Enable_PWRBTN_EN)) {
+			ACPI_PM1_Status |= ACPI_PM1_Enable_PWRBTN_EN;
+			ACPI_SCI_Check();
+		}
+	}
+}
+
+void ACPI_PMTIMER_Event(Bitu /*val*/) {
+	if (!(ACPI_PM1_Status & ACPI_PM1_Enable_TMR_EN)) {
+		ACPI_PM1_Status |= ACPI_PM1_Enable_TMR_EN;
 		ACPI_SCI_Check();
 	}
+
+	ACPI_PMTIMER_ScheduleNext();
+}
+
+/* you can't very well write strings with this, but you could write codes */
+static void acpi_cb_port_debug_w(Bitu /*port*/,Bitu val,Bitu /*iolen*/) {
+	LOG(LOG_MISC,LOG_DEBUG)("ACPI debug: 0x%x\n",(unsigned int)val);
 }
 
 static void acpi_cb_port_smi_cmd_w(Bitu /*port*/,Bitu val,Bitu /*iolen*/) {
@@ -247,12 +316,14 @@ static void acpi_cb_port_smi_cmd_w(Bitu /*port*/,Bitu val,Bitu /*iolen*/) {
 		if (!ACPI_SCI_EN) {
 			LOG(LOG_MISC,LOG_DEBUG)("Guest enabled ACPI");
 			ACPI_SCI_EN = true;
+			ACPI_PMTIMER_CHECK();
 			ACPI_SCI_Check();
 		}
 	}
 	else if (val == ACPI_DISABLE_CMD) {
 		if (ACPI_SCI_EN) {
 			LOG(LOG_MISC,LOG_DEBUG)("Guest disabled ACPI");
+			ACPI_PMTIMER_CHECK();
 			ACPI_SCI_EN = false;
 		}
 	}
@@ -306,6 +377,13 @@ static Bitu acpi_cb_port_evten_blk_r(Bitu port,Bitu /*iolen*/) {
 	return ret;
 }
 
+static Bitu acpi_cb_port_tmr_r(Bitu port,Bitu /*iolen*/) {
+	/* 24 or 32-bit TMR_VAL (depends on the mask value and whether our ACPI structures tell the OS it's 32-bit wide) */
+	Bitu ret = (Bitu)ACPI_PMTIMER();
+	LOG(LOG_MISC,LOG_DEBUG)("ACPI_PM_TMR read port %x ret %x",(unsigned int)port,(unsigned int)ret);
+	return ret;
+}
+
 static void acpi_cb_port_evten_blk_w(Bitu port,Bitu val,Bitu iolen) {
 	/* 16-bit register (PM1_EVT_LEN/2 == 2) */
 	LOG(LOG_MISC,LOG_DEBUG)("ACPI_PM1_EVT_BLK(enable) write port %x val %x iolen %x",(unsigned int)port,(unsigned int)val,(unsigned int)iolen);
@@ -324,9 +402,8 @@ static IO_ReadHandler* acpi_cb_port_r(IO_CalloutObject &co,Bitu port,Bitu iolen)
 	else if ((port & (~1u)) == ACPI_PM1A_CNT_BLK && iolen >= 2)
 		return acpi_cb_port_cnt_blk_r;
 	/* The ACPI specification says nothing about reading SMI_CMD so assume that means write only */
-	else if ((port & (~3u)) == ACPI_PM_TMR_BLK) {
-		LOG(LOG_MISC,LOG_DEBUG)("read ACPI_PM_TMR_BLK port=0x%x iolen=%u",(unsigned int)port,(unsigned int)iolen);
-	}
+	else if ((port & (~3u)) == ACPI_PM_TMR_BLK && iolen >= 4)
+		return acpi_cb_port_tmr_r;
 
 	return NULL;
 }
@@ -343,6 +420,8 @@ static IO_WriteHandler* acpi_cb_port_w(IO_CalloutObject &co,Bitu port,Bitu iolen
 		return acpi_cb_port_cnt_blk_w;
 	else if ((port & (~3u)) == ACPI_SMI_CMD)
 		return acpi_cb_port_smi_cmd_w;
+	else if (port == ACPI_DEBUG_IO && iolen >= 4)
+		return acpi_cb_port_debug_w;
 	else if ((port & (~3u)) == ACPI_PM_TMR_BLK) {
 		LOG(LOG_MISC,LOG_DEBUG)("write ACPI_PM_TMR_BLK port=0x%x iolen=%u",(unsigned int)port,(unsigned int)iolen);
 	}
@@ -5571,74 +5650,148 @@ static Bitu INTDC_PC98_Handler(void) {
     if (dos_kernel_disabled) goto unknown;
 
     switch (reg_cl) {
+        /* Tracking implementation according to [http://hackipedia.org/browse.cgi/Computer/Platform/PC%2c%20NEC%20PC%2d98/Collections/Undocumented%209801%2c%209821%20Volume%201%20English%20translation/INTDC%2eTXT] */
         case 0x0C: /* CL=0x0C General entry point to read function key state */
-            if (reg_ax == 0xFF) { /* Extended version of the API when AX == 0, DS:DX = data to store to */
-                /* DS:DX contains
-                 *       16*10 bytes, 16 bytes per entry for function keys F1-F10
-                 *       16*5 bytes, 16 bytes per entry for VF1-VF5
-                 *       16*10 bytes, 16 bytes per entry for function key shortcuts Shift+F1 to Shift+F10
-                 *       16*5 bytes, 16 bytes per entry for shift VF1-VF5
-                 *       6*11 bytes, 6 bytes per entry for editor keys
-                 *       16*10 bytes, 16 bytes per entry for function key shortcuts Control+F1 to Control+F10
-                 *       16*5 bytes, 16 bytes per entry for control VF1-VF5
+/*===================================================================================================
+Table            [List of key specification values and corresponding keys]
+                 ------------------------+---------------------------------------------------
+                 Key specification value | Corresponding key
+                 ------------------------+---------------------------------------------------
+                 0000h                   | [f･1] to [f･10], [SHIFT] + [f･1] to [SHIFT] + [f･10],
+                                         | [ROLL UP], [ROLL DOWN], [INS], [DEL], [↑], [←], [→], [↓],
+                                         | [HOME/CLR], [HELP], [SHIFT] + [HOME/CLR]
+                 0001 to 000Ah           | [f･1] to [f･10]
+                 000B to 0014h           | [SHIFT] + [f･1] to [SHIFT] + [f･10]
+                 0015h                   | [ROLL UP]
+                 0016h                   | [ROLL DOWN]
+                 0017h                   | [INS]
+                 0018h                   | [DEL]
+                 0019h                   | [↑]
+                 001Ah                   | [←]
+                 001Bh                   | [→]
+                 001Ch                   | [↓]
+                 001Dh                   | [HOME/CLR](XA keyboard:[CLR])
+                 001Eh                   | [HELP]
+                 001Fh                   | [SHIFT]+[HOME/CLR](XA keyboard:[HOME])
+                 0020-0024h              | [vf･1]-[vf･5]
+                 0025-0029h              | [SHIFT]+[vf･1]-[vf･5]
+                 002A-0033h              | [CTRL]+[f･1]-[f･10]
+                 0034-0038h              | [CTRL]+[vf･1]-[vf･5]
+                 0039h                   | [CTRL]+[XFER]/[NFER] (Undocumented)
+                 003Ah                   | [CTRL]+[XFER]/[NFER],[CTRL]+[f･1]～[f･10]
+                                         | (Undocumented)
+                 00FFh                   | [f･1]〜[f･10],[vf･1]〜[vf･5],
+                                         | [SHIFT]+[f･1]〜[SHIFT]+[f･10],[SHIFT]+[vf･1]〜[vf･5],
+                                         | [ROLL UP],[ROLL DOWN],[INS],[DEL],[↑],[←],[→],[↓],
+                                         | [HOME/CLR],[HELP],[SHIFT]+[HOME/CLR],
+                                         | [CTRL]+[f･1] to [f･10], [CTRL]+[vf･1] to [vf･5]
+                 ------------------------+---------------------------------------------------
+
+                 Table [Supported range of key specification values for each MS-DOS version]
+                 ------------------------+---+---+---+---+---+---+---+---+-----+
+                 Key specification value | MS-DOS version (PS98-XXX)
+                                         |111|121|122|123|125|127|129|011|XA125
+                 ------------------------+---+---+---+---+---+---+---+---+-----+
+                 0000 to 001Fh           | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○ | ○
+                 0020 to 0029h           | × | × | × | × | × | × | × | ○ | ○
+                 002A-0033h              | × | × | × | × | ○ | ○ | ○ | ○ | △
+                 0034-0038h              | × | × | × | × | × | × | × | ○ | △
+                 0039h                   | × | × | × | × | × | ○ | ○ | ○ | ×
+                 003Ah                   | × | × | × | × | ○ | ○ | ○ | ○ | ×
+                 00FFh                   | × | × | × | × | × | × | × | ○ | ○
+                 ------------------------+---+---+---+---+---+---+---+---+-----+
+                 * PC-98LT/HA is the same as PS98-127.
+                 * MS-DOS 3.3(all), 5.0, 5.0A is the same as PS98-011.
+                 * For the PS98-XA125 triangle mark, the keys are as follows.
+                   Key values 002B to 0033h specify [CTRL]+[f･1] to [f･9].
+                   Key values 0035 to 0038h specify [CTRL]+[vf･1] to [vf･4].
+===============================================================================================
+                 * NTS: According to a translation table in the MS-DOS kernel, where
+                 *      AX=1h to AX=29h inclusive look up from this 0x29-element table:
                  *
-                 * For whatever reason, the buffer is copied to the DOS buffer +1, meaning that on write it skips the 0x08 byte. */
+                 *      Table starts with AX=1h, ends with AX=29h
+                 *
+                 *                    01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
+                 *                     |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+                 *      0ADC:00003DE0 01 02 03 04 05 06 07 08 09 0A 10 11 12 13 14 15  ................
+                 *      0ADC:00003DF0 16 17 18 19 1F 20 21 22 23 24 25 26 27 28 29 0B  ..... !"#$%&'().
+                 *      0ADC:00003E00 0C 0D 0E 0F 1A 1B 1C 1D 1E|
+                 *
+                 *      The table is read, then the byte is decremented by one.
+                 *
+                 *      If the result of that is less than 0x1E, it's an index into
+                 *      the 16 byte/entry Fn key table.
+                 *
+                 *      If the result is 0x1E or larger, then (result - 0x1E) is an
+                 *      index into the editor table, 8 bytes/entry.
+                 *
+                 *      Meanings:
+                 *
+                 *                    01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
+                 *                     |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+                 *      0ADC:00003DE0 01 02 03 04 05 06 07 08 09 0A 10 11 12 13 14 15  ................
+                 *                   | --- Function keys F1-F10 ---| Fn shift F1-F6 -
+                 *      0ADC:00003DF0 16 17 18 19 1F 20 21 22 23 24 25 26 27 28 29 0B  ..... !"#$%&'().
+                 *                   | Sh F7-F10 | ------- EDITOR KEYS -----------| -
+                 *      0ADC:00003E00 0C 0D 0E 0F 1A 1B 1C 1D 1E|
+                 *                   | --------- | ------------ |
+===============================================================================================*/
+            if (reg_ax == 0x00) { /* Read all state, DS:DX = data to store to */
+/*=============================================================================================
+                 DS:DX contains
+
+Table            [Programmable key setting data buffer structure]
+                 (1) Key specification value 0000h
+                 -------+--------------------+--------------------------------------
+                 Offset | Key type           | Size of key setting data
+                 -------+--------------------+--------------------------------------
+                 +0000h | [f･1]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0010h | [f･2]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0020h | [f･3]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0030h | [f･4]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0040h | [f･5]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0050h | [f･6]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0060h | [f･7]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0070h | [f･8]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0080h | [f･9]              | 16 bytes (15 bytes of key setting data + 00h)
+                 +0090h | [f･10]             | 16 bytes (15 bytes of key setting data + 00h)
+                 +00A0h | [SHIFT]+[f･1]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +00B0h | [SHIFT]+[f･2]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +00C0h | [SHIFT]+[f･3]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +00D0h | [SHIFT]+[f･4]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +00E0h | [SHIFT]+[f･5]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +00F0h | [SHIFT]+[f･6]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +0100h | [SHIFT]+[f･7]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +0110h | [SHIFT]+[f･8]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +0120h | [SHIFT]+[f･9]      | 16 bytes (15 bytes of key setting data + 00h)
+                 +0130h | [SHIFT]+[f･10]     | 16 bytes (15 bytes of key setting data + 00h)
+                 +0140h | [ROLL UP]          | 6 bytes (5 bytes of key setting data + 00h)
+                 +0146h | [ROLL DOWN]        | 6 bytes (5 bytes of key setting data + 00h)
+                 +014Ch | [INS]              | 6 bytes (5 bytes of key setting data + 00h)
+                 +0152h | [DEL]              | 6 bytes (5 bytes of key setting data + 00h)
+                 +0158h | [↑]                | 6 bytes (5 bytes of key setting data + 00h)
+                 +015Eh | [←]                | 6 bytes (5 bytes of key setting data + 00h)
+                 +0164h | [→]                | 6 bytes (5 bytes of key setting data + 00h)
+                 +016Ah | [↓]                | 6 bytes (5 bytes of key setting data + 00h)
+                 +0170h | [HOME/CLR]         | 6 bytes (5 bytes of key setting data + 00h)
+                 +0176h | [HELP]             | 6 bytes (5 bytes of key setting data + 00h)
+                 +017Ch | [SHIFT]+[HOME/CLR] | 6 bytes (5 bytes of key setting data + 00h)
+                 -------+--------------------+--------------------------------------
+===============================================================================================*/
                 Bitu ofs = (Bitu)(SegValue(ds) << 4ul) + (Bitu)reg_dx;
 
                 /* function keys F1-F10 */
                 for (unsigned int f=0;f < 10;f++,ofs += 16)
                     INTDC_STORE_FUNCDEC(ofs,pc98_func_key[f]);
-                /* VF1-VF5 */
-                for (unsigned int f=0;f < 5;f++,ofs += 16)
-                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key[f]);
                 /* function keys Shift+F1 - Shift+F10 */
                 for (unsigned int f=0;f < 10;f++,ofs += 16)
                     INTDC_STORE_FUNCDEC(ofs,pc98_func_key_shortcut[f]);
-                /* VF1-VF5 */
-                for (unsigned int f=0;f < 5;f++,ofs += 16)
-                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key_shortcut[f]);
                 /* editor keys */
                 for (unsigned int f=0;f < 11;f++,ofs += 6)
                     INTDC_STORE_EDITDEC(ofs,pc98_editor_key_escapes[f]);
-                /* function keys Control+F1 - Control+F10 */
-                for (unsigned int f=0;f < 10;f++,ofs += 16)
-                    INTDC_STORE_FUNCDEC(ofs,pc98_func_key_ctrl[f]);
-                /* VF1-VF5 */
-                for (unsigned int f=0;f < 5;f++,ofs += 16)
-                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key_ctrl[f]);
- 
+
                 goto done;
             }
-            /* NTS: According to a translation table in the MS-DOS kernel, where
-             *      AX=1h to AX=29h inclusive look up from this 0x29-element table:
-             *
-             *      Table starts with AX=1h, ends with AX=29h
-             *
-             *                    01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
-             *                     |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-             *      0ADC:00003DE0 01 02 03 04 05 06 07 08 09 0A 10 11 12 13 14 15  ................
-             *      0ADC:00003DF0 16 17 18 19 1F 20 21 22 23 24 25 26 27 28 29 0B  ..... !"#$%&'().
-             *      0ADC:00003E00 0C 0D 0E 0F 1A 1B 1C 1D 1E|
-             *
-             *      The table is read, then the byte is decremented by one.
-             *
-             *      If the result of that is less than 0x1E, it's an index into
-             *      the 16 byte/entry Fn key table.
-             *
-             *      If the result is 0x1E or larger, then (result - 0x1E) is an
-             *      index into the editor table, 8 bytes/entry.
-             *
-             *      Meanings:
-             *
-             *                    01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10
-             *                     |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-             *      0ADC:00003DE0 01 02 03 04 05 06 07 08 09 0A 10 11 12 13 14 15  ................
-             *                   | --- Function keys F1-F10 ---| Fn shift F1-F6 -
-             *      0ADC:00003DF0 16 17 18 19 1F 20 21 22 23 24 25 26 27 28 29 0B  ..... !"#$%&'().
-             *                   | Sh F7-F10 | ------- EDITOR KEYS -----------| -
-             *      0ADC:00003E00 0C 0D 0E 0F 1A 1B 1C 1D 1E|
-             *                   | --------- | ------------ |
-             */
             else if (reg_ax >= 0x01 && reg_ax <= 0x0A) { /* Read individual function keys, DS:DX = data to store to */
                 Bitu ofs = (Bitu)(SegValue(ds) << 4ul) + (Bitu)reg_dx;
                 INTDC_STORE_FUNCDEC(ofs,pc98_func_key[reg_ax - 0x01]);
@@ -5674,11 +5827,15 @@ static Bitu INTDC_PC98_Handler(void) {
                 INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key_ctrl[reg_ax - 0x34]);
                 goto done;
             }
-            else if (reg_ax == 0x00) { /* Read all state, DS:DX = data to store to */
+            else if (reg_ax == 0xFF) { /* Extended version of the API when AX == 0, DS:DX = data to store to */
                 /* DS:DX contains
                  *       16*10 bytes, 16 bytes per entry for function keys F1-F10
+                 *       16*5 bytes, 16 bytes per entry for VF1-VF5
                  *       16*10 bytes, 16 bytes per entry for function key shortcuts Shift+F1 to Shift+F10
-                 *       6*11 bytes, 6 bytes per entry of unknown relevance (GUESS: Escapes for other keys like INS, DEL?)
+                 *       16*5 bytes, 16 bytes per entry for shift VF1-VF5
+                 *       6*11 bytes, 6 bytes per entry for editor keys
+                 *       16*10 bytes, 16 bytes per entry for function key shortcuts Control+F1 to Control+F10
+                 *       16*5 bytes, 16 bytes per entry for control VF1-VF5
                  *
                  * For whatever reason, the buffer is copied to the DOS buffer +1, meaning that on write it skips the 0x08 byte. */
                 Bitu ofs = (Bitu)(SegValue(ds) << 4ul) + (Bitu)reg_dx;
@@ -5686,13 +5843,25 @@ static Bitu INTDC_PC98_Handler(void) {
                 /* function keys F1-F10 */
                 for (unsigned int f=0;f < 10;f++,ofs += 16)
                     INTDC_STORE_FUNCDEC(ofs,pc98_func_key[f]);
+                /* VF1-VF5 */
+                for (unsigned int f=0;f < 5;f++,ofs += 16)
+                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key[f]);
                 /* function keys Shift+F1 - Shift+F10 */
                 for (unsigned int f=0;f < 10;f++,ofs += 16)
                     INTDC_STORE_FUNCDEC(ofs,pc98_func_key_shortcut[f]);
+                /* VF1-VF5 */
+                for (unsigned int f=0;f < 5;f++,ofs += 16)
+                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key_shortcut[f]);
                 /* editor keys */
                 for (unsigned int f=0;f < 11;f++,ofs += 6)
                     INTDC_STORE_EDITDEC(ofs,pc98_editor_key_escapes[f]);
-
+                /* function keys Control+F1 - Control+F10 */
+                for (unsigned int f=0;f < 10;f++,ofs += 16)
+                    INTDC_STORE_FUNCDEC(ofs,pc98_func_key_ctrl[f]);
+                /* VF1-VF5 */
+                for (unsigned int f=0;f < 5;f++,ofs += 16)
+                    INTDC_STORE_FUNCDEC(ofs,pc98_vfunc_key_ctrl[f]);
+ 
                 goto done;
             }
             goto unknown;
@@ -7387,30 +7556,21 @@ static Bitu INT15_Handler(void) {
                          *    0) 0x000000-0x09EFFF       Free memory
                          *    1) 0x0C0000-0x0FFFFF       Reserved
                          *    2) 0x100000-...            Free memory (no ACPI tables) */
-                        if (reg_ebx < 3) {
-                            uint32_t base = 0,len = 0,type = 0;
+                        if (reg_ebx < E280_table_entries) {
+                            BIOS_E280_entry &ent = E280_table[reg_ebx];
                             Bitu seg = SegValue(es);
 
-                            assert((MEM_TotalPages()*4096) >= 0x100000);
-
-                            switch (reg_ebx) {
-                                case 0: base=0x000000; len=0x09F000; type=1; break;
-                                case 1: base=0x0C0000; len=0x040000; type=2; break;
-                                case 2: base=0x100000; len=(MEM_TotalPages()*4096)-0x100000; type=1; break;
-                                default: E_Exit("Despite checks EBX is wrong value"); /* BUG! */
-                            }
-
                             /* write to ES:DI */
-                            real_writed(seg,reg_di+0x00,base);
-                            real_writed(seg,reg_di+0x04,0);
-                            real_writed(seg,reg_di+0x08,len);
-                            real_writed(seg,reg_di+0x0C,0);
-                            real_writed(seg,reg_di+0x10,type);
+                            real_writed(seg,reg_di+0x00,ent.base);
+                            real_writed(seg,reg_di+0x04,(uint32_t)(ent.base >> (uint64_t)32u));
+                            real_writed(seg,reg_di+0x08,ent.length);
+                            real_writed(seg,reg_di+0x0C,(uint32_t)(ent.length >> (uint64_t)32u));
+                            real_writed(seg,reg_di+0x10,ent.type);
                             reg_ecx = 20;
 
                             /* return EBX pointing to next entry. wrap around, as most BIOSes do.
                              * the program is supposed to stop on CF=1 or when we return EBX == 0 */
-                            if (++reg_ebx >= 3) reg_ebx = 0;
+                            if (++reg_ebx >= E280_table_entries) reg_ebx = 0;
                         }
                         else {
                             CALLBACK_SCF(true);
@@ -7678,158 +7838,6 @@ bool AdapterROM_Read(Bitu address,unsigned long *size) {
     }
 
     return false;
-}
-
-#include "src/gui/dosbox.vga16.bmp.h"
-#include "src/gui/dosbox.cga640.bmp.h"
-
-void DrawDOSBoxLogoCGA6(unsigned int x,unsigned int y) {
-    const unsigned char *s = dosbox_cga640_bmp;
-    const unsigned char *sf = s + sizeof(dosbox_cga640_bmp);
-    uint32_t width,height;
-    unsigned int dx,dy;
-    uint32_t off;
-    uint32_t sz;
-
-    if (memcmp(s,"BM",2)) return;
-    sz = host_readd(s+2); // size of total bitmap
-    off = host_readd(s+10); // offset of bitmap
-    if ((s+sz) > sf) return;
-    if ((s+14+40) > sf) return;
-
-    sz = host_readd(s+34); // biSize
-    if ((s+off+sz) > sf) return;
-    if (host_readw(s+26) != 1) return; // biBitPlanes
-    if (host_readw(s+28) != 1)  return; // biBitCount
-
-    width = host_readd(s+18);
-    height = host_readd(s+22);
-    if (width > (640-x) || height > (200-y)) return;
-
-    LOG(LOG_MISC,LOG_DEBUG)("Drawing CGA logo (%u x %u)",(int)width,(int)height);
-    for (dy=0;dy < height;dy++) {
-        uint32_t vram  = ((y+dy) >> 1) * 80;
-        vram += ((y+dy) & 1) * 0x2000;
-        vram += (x / 8);
-        s = dosbox_cga640_bmp + off + ((height-(dy+1))*((width+7)/8));
-        for (dx=0;dx < width;dx += 8) {
-            mem_writeb(0xB8000+vram,*s);
-            vram++;
-            s++;
-        }
-    }
-}
-
-/* HACK: Re-use the VGA logo */
-void DrawDOSBoxLogoPC98(unsigned int x,unsigned int y) {
-    const unsigned char *s = dosbox_vga16_bmp;
-    const unsigned char *sf = s + sizeof(dosbox_vga16_bmp);
-    unsigned int bit,dx,dy;
-    uint32_t width,height;
-    unsigned char p[4];
-    unsigned char c;
-    uint32_t off;
-    uint32_t sz;
-
-    if (memcmp(s,"BM",2)) return;
-    sz = host_readd(s+2); // size of total bitmap
-    off = host_readd(s+10); // offset of bitmap
-    if ((s+sz) > sf) return;
-    if ((s+14+40) > sf) return;
-
-    sz = host_readd(s+34); // biSize
-    if ((s+off+sz) > sf) return;
-    if (host_readw(s+26) != 1) return; // biBitPlanes
-    if (host_readw(s+28) != 4)  return; // biBitCount
-
-    width = host_readd(s+18);
-    height = host_readd(s+22);
-    if (width > (640-x) || height > (350-y)) return;
-
-    // EGA/VGA Write Mode 2
-    LOG(LOG_MISC,LOG_DEBUG)("Drawing VGA logo as PC-98 (%u x %u)",(int)width,(int)height);
-    for (dy=0;dy < height;dy++) {
-        uint32_t vram = ((y+dy) * 80) + (x / 8);
-        s = dosbox_vga16_bmp + off + ((height-(dy+1))*((width+1)/2));
-        for (dx=0;dx < width;dx += 8) {
-            p[0] = p[1] = p[2] = p[3] = 0;
-            for (bit=0;bit < 8;) {
-                c = (*s >> 4);
-                p[0] |= ((c >> 0) & 1) << (7 - bit);
-                p[1] |= ((c >> 1) & 1) << (7 - bit);
-                p[2] |= ((c >> 2) & 1) << (7 - bit);
-                p[3] |= ((c >> 3) & 1) << (7 - bit);
-                bit++;
-
-                c = (*s++) & 0xF;
-                p[0] |= ((c >> 0) & 1) << (7 - bit);
-                p[1] |= ((c >> 1) & 1) << (7 - bit);
-                p[2] |= ((c >> 2) & 1) << (7 - bit);
-                p[3] |= ((c >> 3) & 1) << (7 - bit);
-                bit++;
-            }
-
-            mem_writeb(0xA8000+vram,p[0]);
-            mem_writeb(0xB0000+vram,p[1]);
-            mem_writeb(0xB8000+vram,p[2]);
-            mem_writeb(0xE0000+vram,p[3]);
-            vram++;
-        }
-    }
-}
-
-void DrawDOSBoxLogoVGA(unsigned int x,unsigned int y) {
-    const unsigned char *s = dosbox_vga16_bmp;
-    const unsigned char *sf = s + sizeof(dosbox_vga16_bmp);
-    unsigned int bit,dx,dy;
-    uint32_t width,height;
-    uint32_t vram;
-    uint32_t off;
-    uint32_t sz;
-
-    if (memcmp(s,"BM",2)) return;
-    sz = host_readd(s+2); // size of total bitmap
-    off = host_readd(s+10); // offset of bitmap
-    if ((s+sz) > sf) return;
-    if ((s+14+40) > sf) return;
-
-    sz = host_readd(s+34); // biSize
-    if ((s+off+sz) > sf) return;
-    if (host_readw(s+26) != 1) return; // biBitPlanes
-    if (host_readw(s+28) != 4)  return; // biBitCount
-
-    width = host_readd(s+18);
-    height = host_readd(s+22);
-    if (width > (640-x) || height > (350-y)) return;
-
-    // EGA/VGA Write Mode 2
-    LOG(LOG_MISC,LOG_DEBUG)("Drawing VGA logo (%u x %u)",(int)width,(int)height);
-    IO_Write(0x3CE,0x05); // graphics mode
-    IO_Write(0x3CF,0x02); // read=0 write=2 odd/even=0 shift=0 shift256=0
-    IO_Write(0x3CE,0x03); // data rotate
-    IO_Write(0x3CE,0x00); // no rotate, no XOP
-    for (bit=0;bit < 8;bit++) {
-        const unsigned char shf = ((bit & 1) ^ 1) * 4;
-
-        IO_Write(0x3CE,0x08); // bit mask
-        IO_Write(0x3CF,0x80 >> bit);
-
-        for (dy=0;dy < height;dy++) {
-            vram = ((y+dy) * 80) + (x / 8);
-            s = dosbox_vga16_bmp + off + (bit/2) + ((height-(dy+1))*((width+1)/2));
-            for (dx=bit;dx < width;dx += 8) {
-                mem_readb(0xA0000+vram); // load VGA latches
-                mem_writeb(0xA0000+vram,(*s >> shf) & 0xF);
-                vram++;
-                s += 4;
-            }
-        }
-    }
-    // restore write mode 0
-    IO_Write(0x3CE,0x05); // graphics mode
-    IO_Write(0x3CF,0x00); // read=0 write=0 odd/even=0 shift=0 shift256=0
-    IO_Write(0x3CE,0x08); // bit mask
-    IO_Write(0x3CF,0xFF);
 }
 
 static int bios_pc98_posx = 0;
@@ -8488,6 +8496,11 @@ namespace ACPIMethodFlags {
 	};
 }
 
+static constexpr unsigned int ACPIrtIO_16BitDecode = (1u << 0u);
+
+static constexpr unsigned int ACPIrtMR24_Writeable = (1u << 0u);
+static constexpr unsigned int ACPIrtMR32_Writeable = (1u << 0u);
+
 namespace ACPIFieldFlag {
 	namespace AccessType {
 		enum {
@@ -8731,6 +8744,16 @@ class ACPIAMLWriter {
 		unsigned char* writeptr(void) const;
 		void begin(unsigned char *n_w,unsigned char *n_f);
 	public:
+		ACPIAMLWriter &rtDMA(const unsigned char bitmask,const unsigned char flags);
+		ACPIAMLWriter &rtMemRange24(const unsigned int flags,const unsigned int minr,const unsigned int maxr,const unsigned int alignr,const unsigned int rangr);
+		ACPIAMLWriter &rtMemRange32(const unsigned int flags,const unsigned int minr,const unsigned int maxr,const unsigned int alignr,const unsigned int rangr);
+		ACPIAMLWriter &rtIO(const unsigned int flags,const uint16_t minport,const uint16_t maxport,const uint8_t alignment,const uint8_t rlength);
+		ACPIAMLWriter &rtIRQ(const uint16_t bitmask/*bits [15:0] correspond to IRQ 15-0*/,const bool pciStyle=false);
+		ACPIAMLWriter &rtHdrSmall(const unsigned char itemName,const unsigned int length);
+		ACPIAMLWriter &rtHdrLarge(const unsigned char itemName,const unsigned int length);
+		ACPIAMLWriter &rtBegin(void);
+		ACPIAMLWriter &rtEnd(void);
+	public:
 		ACPIAMLWriter &NameOp(const char *name);
 		ACPIAMLWriter &ByteOp(const unsigned char v);
 		ACPIAMLWriter &WordOp(const unsigned int v);
@@ -8739,14 +8762,18 @@ class ACPIAMLWriter {
 		ACPIAMLWriter &OpRegionOp(const char *name,const ACPIRegionSpace regionspace);
 		ACPIAMLWriter &FieldOp(const char *name,const unsigned int pred_size,const unsigned int fieldflag);
 		ACPIAMLWriter &FieldOpEnd(void);
-		ACPIAMLWriter &ScopeOp(const char *name,const unsigned int pred_size=MaxPkgSize);
+		ACPIAMLWriter &ScopeOp(const unsigned int pred_size=MaxPkgSize);
 		ACPIAMLWriter &ScopeOpEnd(void);
 		ACPIAMLWriter &PackageOp(const unsigned int pred_size=MaxPkgSize);
+		ACPIAMLWriter &RootCharScopeOp(void);
 		ACPIAMLWriter &PackageOpEnd(void);
+		ACPIAMLWriter &RootCharOp(void);
 		ACPIAMLWriter &NothingOp(void);
 		ACPIAMLWriter &ZeroOp(void);
 		ACPIAMLWriter &OneOp(void);
 		ACPIAMLWriter &AliasOp(const char *what,const char *to_what);
+		ACPIAMLWriter &BufferOpEnd(void);
+		ACPIAMLWriter &BufferOp(const unsigned int pred_size=MaxPkgSize);
 		ACPIAMLWriter &BufferOp(const unsigned char *data,const size_t datalen);
 		ACPIAMLWriter &DeviceOp(const char *name,const unsigned int pred_size=MaxPkgSize);
 		ACPIAMLWriter &DeviceOpEnd(void);
@@ -8774,11 +8801,15 @@ class ACPIAMLWriter {
 		ACPIAMLWriter &PkgLength(const unsigned int len,unsigned char* &wp,const unsigned int minlen=1);
 		ACPIAMLWriter &PkgLength(const unsigned int len,const unsigned int minlen=1);
 		ACPIAMLWriter &Name(const char *name);
+		ACPIAMLWriter &MultiNameOp(void);
+		ACPIAMLWriter &DualNameOp(void);
 		ACPIAMLWriter &BeginPkg(const unsigned int pred_length=MaxPkgSize);
 		ACPIAMLWriter &EndPkg(void);
 		ACPIAMLWriter &CountElement(void);
 	private:
 		unsigned char*		w=NULL,*f=NULL;
+		unsigned char*		buffer_len_pl = NULL;
+		unsigned char*		rt_start = NULL;
 };
 
 /* StoreOp Operand Supername: Store Operand into Supername */
@@ -8819,6 +8850,17 @@ ACPIAMLWriter &ACPIAMLWriter::ArgOp(const unsigned int arg) {
  * }
  *
  * See what they did there? */
+ACPIAMLWriter &ACPIAMLWriter::RootCharOp(void) {
+	*w++ = '\\';
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::RootCharScopeOp(void) {
+	RootCharOp(); /* this is how iasl encodes for example Scope(\) */
+	ZeroOp();
+	return *this;
+}
+
 ACPIAMLWriter &ACPIAMLWriter::NothingOp(void) {
 	ZeroOp();
 	return *this;
@@ -8903,6 +8945,23 @@ ACPIAMLWriter &ACPIAMLWriter::BufferOp(const unsigned char *data,const size_t da
 	return *this;
 }
 
+ACPIAMLWriter &ACPIAMLWriter::BufferOp(const unsigned int pred_size) {
+	assert(pred_size >= 10);
+	*w++ = 0x11;
+	BeginPkg(pred_size);
+	DwordOp(0); // placeholder
+	buffer_len_pl = w - 4;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::BufferOpEnd(void) {
+	assert(buffer_len_pl != NULL);
+	host_writed(buffer_len_pl,size_t(w - (buffer_len_pl + 4)));
+	buffer_len_pl = NULL;
+	EndPkg();
+	return *this;
+}
+
 ACPIAMLWriter &ACPIAMLWriter::AliasOp(const char *what,const char *to_what) {
 	*w++ = 0x06;
 	Name(what);
@@ -8937,6 +8996,83 @@ ACPIAMLWriter &ACPIAMLWriter::ElseOpEnd(void) {
 	return *this;
 }
 
+ACPIAMLWriter &ACPIAMLWriter::rtHdrLarge(const unsigned char itemName,const unsigned int length) {
+	assert(length <= 65536);
+	assert(itemName < 128);
+	*w++ = 0x80 + itemName;
+	host_writew(w,length); w += 2;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtHdrSmall(const unsigned char itemName,const unsigned int length) {
+	assert(length < 8);
+	assert(itemName < 16);
+	*w++ = (itemName << 3) + length;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtBegin(void) {
+	rt_start = w;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtEnd(void) {
+	rtHdrSmall(15/*end tag format*/,1/*length*/);
+	if (rt_start != NULL) {
+		unsigned char sum = 0;
+		for (unsigned char *s=rt_start;s < w;s++) sum += *s++;
+		*w++ = 0x100 - sum;
+	}
+	else {
+		*w++ = 0;
+	}
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtMemRange24(const unsigned int flags,const unsigned int minr,const unsigned int maxr,const unsigned int alignr,const unsigned int rangr) {
+	rtHdrLarge(1/*24-bit memory range format*/,9/*length*/);
+	*w++ = flags;
+	host_writew(w,minr >> 8u); w += 2;
+	host_writew(w,maxr >> 8u); w += 2;
+	host_writew(w,(alignr + 0xFFu) >> 8u); w += 2; /* FIXME: Um... alignment in bytes but everything else multiple of 256 bytes? */
+	host_writew(w,rangr >> 8u); w += 2;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtMemRange32(const unsigned int flags,const unsigned int minr,const unsigned int maxr,const unsigned int alignr,const unsigned int rangr) {
+	rtHdrLarge(5/*32-bit memory range format*/,17/*length*/);
+	*w++ = flags;
+	host_writed(w,minr); w += 4;
+	host_writed(w,maxr); w += 4;
+	host_writed(w,alignr); w += 4;
+	host_writed(w,rangr); w += 4;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtDMA(const unsigned char bitmask,const unsigned char flags) {
+	rtHdrSmall(5/*DMA format*/,2/*length*/);
+	*w++ = bitmask;
+	*w++ = flags;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtIO(const unsigned int flags,const uint16_t minport,const uint16_t maxport,const uint8_t alignment,const uint8_t rlength) {
+	rtHdrSmall(8/*IO format*/,7/*length*/);
+	*w++ = (unsigned char)flags;
+	host_writew(w,minport); w += 2;
+	host_writew(w,maxport); w += 2;
+	*w++ = alignment;
+	*w++ = rlength;
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::rtIRQ(const uint16_t bitmask,const bool pciStyle) {
+	rtHdrSmall(4/*IRQ format*/,3/*length*/);
+	host_writew(w,bitmask); w += 2;
+	*w++ = pciStyle ? 0x18/*active low level trigger shareable*/ : 0x01/*active high edge trigger*/;
+	return *this;
+}
+
 ACPIAMLWriter &ACPIAMLWriter::NameOp(const char *name) {
 	*w++ = 0x08; // NameOp
 	Name(name);
@@ -8949,6 +9085,16 @@ ACPIAMLWriter &ACPIAMLWriter::Name(const char *name) {
 		else *w++ = '_';
 	}
 
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::MultiNameOp(void) {
+	*w++ = 0x2F; // MultiNamePrefix
+	return *this;
+}
+
+ACPIAMLWriter &ACPIAMLWriter::DualNameOp() {
+	*w++ = 0x2E; // DualNamePrefix
 	return *this;
 }
 
@@ -9027,10 +9173,9 @@ ACPIAMLWriter &ACPIAMLWriter::FieldOpEnd(void) {
 	return *this;
 }
 
-ACPIAMLWriter &ACPIAMLWriter::ScopeOp(const char *name,const unsigned int pred_size) {
+ACPIAMLWriter &ACPIAMLWriter::ScopeOp(const unsigned int pred_size) {
 	*w++ = 0x10;
 	BeginPkg(pred_size);
-	Name(name);
 	return *this;
 }
 
@@ -9222,95 +9367,38 @@ void BuildACPITable(void) {
 		 *     DataItem := DefBuffer | DefNum | DefString
 		 *
 		 *     How to write: ACPIAML1_NameOp(Name) followed by the necessary functions to write the buffer, string, etc. for the name. */
-		/* Name(TST1,0xAB) */
-		aml.NameOp("TST1").ByteOp(0xAB);
-		/* Name(TST2,0x1234) */
-		aml.NameOp("TST2").WordOp(0x1234);
-		/* Name(TST3,0x12345678) */
-		aml.NameOp("TST3").DwordOp(0x12345678);
-		/* Name(TST4,"Hello ACPI BIOS") */
-		aml.NameOp("TST4").StringOp("Hello ACPI BIOS");
-		/* OperationRegion(ABC,SystemMemory,0xAABB0000,0x4100) */
-		aml.OpRegionOp("ABC",ACPIRegionSpace::SystemMemory).DwordOp(0xAABB0000).WordOp(0x4100);
-		/* OperationRegion(ABC2,SystemIO,0x880,0x18) */
-		aml.OpRegionOp("ABC2",ACPIRegionSpace::SystemIO).WordOp(0x880).WordOp(0x18);
-		/* Field(ABC2,AnyAcc,Lock,Preserve) which also calls BeginPkg(), FieldOpEnd calls EndPkg(). Use only Field writing functions! */
-		aml.FieldOp("ABC2",ACPIAMLWriter::MaxPkgSize,ACPIFieldFlag::AccessType::AnyAcc|ACPIFieldFlag::LockRule::Lock|ACPIFieldFlag::UpdateRule::Preserve);
-		aml.FieldOpElement("AF00",1);
-		aml.FieldOpElement("AF01",3);
-		aml.FieldOpElement("",2);
-		aml.FieldOpElement("AF02",2);
-		aml.FieldOpElement("AF03",3);
-		aml.FieldOpElement("",5+8);
-		aml.FieldOpElement("AF04",8);
-		aml.FieldOpEnd();
-		/* Scope */
-		aml.ScopeOp("_SB");
-		aml.NameOp("TST1").DwordOp(0xABCDEF);
-		/* Package ABCD */
-		aml.NameOp("ABCD").PackageOp();
-		/* Package contents. YOU MUST COUNT ELEMENTS MANUALLY */
-		aml.DwordOp(0xABCDEF).CountElement();
-		aml.DwordOp(0x1234).CountElement();
-		aml.ZeroOp().CountElement();
-		aml.OneOp().CountElement();
-		aml.PackageOp();
-		aml.StringOp("Hello world").CountElement();
-		aml.DwordOp(0xABCD1234).CountElement();
-		aml.PackageOpEnd().CountElement();
-		/* Package end */
-		aml.PackageOpEnd();
-		aml.AliasOp("TST1","ATS1");
-		aml.AliasOp("TST2","ATS2");
-		aml.AliasOp("TST3","ATS3");
-		{
-			static const unsigned char dept_of_redundant_redundancy[] = {0x11,0x22,0x33,0xAA,0xBB,0xCC};
-			aml.NameOp("DORR").BufferOp(dept_of_redundant_redundancy,sizeof(dept_of_redundant_redundancy));
-		}
-		/* device PCI0 */
-		aml.DeviceOp("PCI0");
-		aml.NameOp("DUH").DwordOp(0xABCD1234);
-		aml.NameOp("NDUH").ZeroOp();
-		/* method KICK */
-		aml.MethodOp("KICK",ACPIAMLWriter::MaxPkgSize,ACPIMethodFlags::ArgCount(2)|ACPIMethodFlags::Serialized);
-		aml.StoreOp().DwordOp(0x12345678).LocalOp(0); /* Local0 = 0x12345678 */
-		aml.AndOp().LocalOp(0).DwordOp(0xF0F0F0F0).LocalOp(0); /* Local0 &= 0xF0F0F0F0 (literally: Op1 = Local0 Op2 = 0xF0F0F0F0 Target = Local0) */
-		aml.StoreOp()./*(*/AndOp().LocalOp(0).DwordOp(0xFF00FF00).NothingOp()/*)*/.LocalOp(1); /* Local1 = Local0 & 0xFF00FF00 */
-		aml.StoreOp()./*(*/OrOp()./*(*/AndOp().LocalOp(0).DwordOp(0xCECECECE).NothingOp()/*)*/.DwordOp(0x03030303).NothingOp()/*)*/.LocalOp(2); /* Local2 = (Local0 & 0xFF00FF00) | 0x03030303 */
-		aml.IfOp().LEqualOp().Name("DUH").DwordOp(0xABCD1234); /* if (DUH == 0xABCD1234) { */
-			aml.ReturnOp().DwordOp(6); /* return 6; */
-		aml.IfOpEnd(); /* } (/if) */
-		aml.ElseOp(); /* else { */
-			aml.IfOp().LAndOp().Name("DUH").Name("NDUH"); /* if (DUH && NDUH) { */
-				aml.ReturnOp().DwordOp(77); /* return 77; */
-			aml.IfOpEnd(); /* } (/if) */
-			aml.IfOp().AndOp().Name("DUH").DwordOp(0x40103).NothingOp(); /* if (DUH & 0x40103) {    (note AndOp Op1 Op2 Target == "DUH" 0x40103 Nothing) */
-				aml.ReturnOp().DwordOp(77); /* return 79; */
-			aml.IfOpEnd(); /* } (/if) */
-		aml.ElseOpEnd(); /* } (/else) */
+		aml.ScopeOp().RootCharScopeOp();/* Scope (\) */
+			aml.OpRegionOp("DBG",ACPIRegionSpace::SystemIO).WordOp(ACPI_DEBUG_IO).ByteOp(0x10);
+			aml.FieldOp("DBG",ACPIAMLWriter::MaxPkgSize,ACPIFieldFlag::AccessType::DwordAcc|ACPIFieldFlag::UpdateRule::WriteAsZeros);
+			aml.FieldOpElement("DBGV",32);
+			aml.FieldOpEnd();
+		aml.ScopeOpEnd(); /* } end of Scope(\) */
 
-		aml.IfOp().Name("DUH"); /* if (DUH) { */
-			aml.ReturnOp().DwordOp(3); /* return 3; */
-		aml.IfOpEnd(); /* } (/if) */
-		aml.ElseOp(); /* else { */
-			aml.IfOp().Name("NDUH"); /* if (NDUH) { */
-				aml.ReturnOp().OneOp(); /* return 1; */
-			aml.IfOpEnd(); /* } (/if) */
-			aml.ElseOp(); /* else { */
-				aml.IfOp().LNotEqualOp().Name("NDUH").DwordOp(52); /* if (NDUH != 52) { */
-					aml.ReturnOp().DwordOp(666); /* return 666; */
-				aml.IfOpEnd(); /* } (/if) */
-				aml.ElseOp(); /* else { */
-					aml.ReturnOp().ZeroOp(); /* return 0; */
-				aml.ElseOpEnd(); /* } (/else) */
-			aml.ElseOpEnd(); /* } (/else) */
-		aml.ElseOpEnd(); /* } (/else) */
-		aml.MethodOpEnd();
-		/* end method */
-		aml.DeviceOpEnd();
-		/* end device */
+		aml.ScopeOp().RootCharOp().Name("_SB");
+			if (pcibus_enable) {
+				aml.DeviceOp("PCI0");
+					aml.NameOp("_HID").DwordOp(ISAPNP_ID('P','N','P',0x00,0x0A,0x00,0x03));
+					aml.NameOp("_ADR").DwordOp(0); /* [31:16] device [15:0] function */
+					aml.NameOp("_UID").DwordOp(0xD05B0C5);
+				aml.NameOp("_CRS").BufferOp().rtBegin(); /* ResourceTemplate() i.e. resource list */
+					aml.rtIO(
+						ACPIrtIO_16BitDecode,
+						0x0CF8,/*min*/
+						0x0CF8,/*max*/
+						0x01,/*align*/
+						0x4/*number of I/O ports req*/);
+					aml.rtEnd();
+				aml.BufferOpEnd();
+			}
+			else {
+				aml.DeviceOp("ISA");
+					aml.NameOp("_HID").DwordOp(ISAPNP_ID('P','N','P',0x00,0x0A,0x00,0x00));
+					aml.NameOp("_ADR").DwordOp(0); /* [31:16] device [15:0] function */
+					aml.NameOp("_UID").DwordOp(0xD05B0C5);
+				aml.DeviceOpEnd();
+
+			}
 		aml.ScopeOpEnd();
-		/* end scope */
 
 		assert(aml.writeptr() >= (dsdt.getptr()+dsdt.get_tablesize()));
 		assert(aml.writeptr() <= f);
@@ -9319,7 +9407,7 @@ void BuildACPITable(void) {
 		w = dsdt.finish();
 	}
 
-	{
+	{ /* Fixed ACPI Description Table (FACP) */
 		ACPISysDescTableWriter facp;
 		const PhysPt facp_offset = acpiofs2phys( acpiptr2ofs( w ) );
 
@@ -9351,6 +9439,30 @@ void BuildACPITable(void) {
 	LOG(LOG_MISC,LOG_DEBUG)("ACPI: RDST at 0x%lx len 0x%lx",(unsigned long)acpiofs2phys( acpiptr2ofs( rsdt ) ),(unsigned long)rsdt_tw.get_tablesize());
 	rsdt_tw.finish();
 }
+
+#if C_LIBPNG
+# include "dosbox224x93.h"
+# include "dosbox224x163.h"
+# include "dosbox224x186.h"
+# include "dosbox224x224.h"
+
+static const unsigned char *BIOSLOGO_PNG_PTR = NULL;
+static const unsigned char *BIOSLOGO_PNG_FENCE = NULL;
+
+static void BIOSLOGO_PNG_READ(png_structp context,png_bytep buf,size_t count) {
+	(void)context;
+
+	while (count > 0 && BIOSLOGO_PNG_PTR < BIOSLOGO_PNG_FENCE) {
+		*buf++ = *BIOSLOGO_PNG_PTR++;
+		count--;
+	}
+	while (count > 0) {
+		*buf++ = 0;
+		count--;
+	}
+}
+
+#endif
 
 extern unsigned int INT13Xfer;
 
@@ -9384,6 +9496,33 @@ private:
 	ACPI_BM_RLD = false;
 	ACPI_PM1_Status = 0;
 	ACPI_PM1_Enable = 0;
+
+	E280_table_entries = 0;
+
+	{/*Conventional memory*/
+		BIOS_E280_entry &ent = E280_table[E280_table_entries++];
+		ent.base = 0x00000000;
+		ent.length = 0x9F000; /* 640KB minus the EBDA */
+		ent.type = 1;/*Normal RAM*/
+	}
+	{/*Conventional adapter ROM/RAM/BIOS*/
+		BIOS_E280_entry &ent = E280_table[E280_table_entries++];
+		ent.base = 0x000C0000;
+		ent.length = 0x40000;
+		ent.type = 2;/*Reserved*/
+	}
+	if (MEM_TotalPages() > 0x100) { /* more than 1MB of RAM */
+		BIOS_E280_entry &ent = E280_table[E280_table_entries++];
+		ent.base = 0x00100000;
+		ent.length = (MEM_TotalPages()-0x100u)*4096u;
+		ent.type = 1;/*Normal RAM*/
+	}
+	if (MEM_TotalPagesAt4GB() > 0) { /* anything above 4GB? */
+		BIOS_E280_entry &ent = E280_table[E280_table_entries++];
+		ent.base = uint64_t(0x100000000ull);
+		ent.length = uint64_t(MEM_TotalPagesAt4GB())*uint64_t(4096ul);
+		ent.type = 1;/*Normal RAM*/
+	}
 
         /* If we're here because of a JMP to F000:FFF0 from a DOS program, then
          * an actual reset is needed to prevent reentrancy problems with the DOS
@@ -9707,7 +9846,7 @@ private:
         bios_has_exec_vga_bios = false;
         LOG(LOG_MISC,LOG_DEBUG)("BIOS: executing POST routine");
 
-	if (ACPI_REGION_SIZE != 0) {
+	if (ACPI_REGION_SIZE != 0 && !IS_PC98_ARCH) {
 		// place it just below the mirror of the BIOS at FFFF0000
 		ACPI_BASE = 0xFFFF0000 - ACPI_REGION_SIZE;
 
@@ -10723,6 +10862,8 @@ private:
     CALLBACK_HandlerObject cb_bios_startup_screen;
     static Bitu cb_bios_startup_screen__func(void) {
         const Section_prop* section = static_cast<Section_prop *>(control->GetSection("dosbox"));
+        const char *logo_text = section->Get_string("logo text");
+        const char *logo = section->Get_string("logo");
         bool fastbioslogo=section->Get_bool("fastbioslogo")||control->opt_fastbioslogo||control->opt_fastlaunch;
         if (fastbioslogo && machine != MCH_PC98) {
 #if defined(USE_TTF)
@@ -10754,9 +10895,9 @@ private:
                 oldcols = oldlins = 0;
         }
 #endif
-        if (machine == MCH_MDA || machine == MCH_HERC) {
-            textsplash = true;
-        }
+
+	textsplash = true;
+
         char logostr[8][34];
         strcpy(logostr[0], "+---------------------+");
         strcpy(logostr[1], "|     Welcome  To     |");
@@ -10768,39 +10909,19 @@ private:
         sprintf(logostr[6], "| Version %10s  |", VERSION);
         strcpy(logostr[7], "+---------------------+");
 startfunction:
-        int logo_x,logo_y,x=2,y=2,rowheight=8;
+        int logo_x,logo_y,x=2,y=2;
+
         logo_y = 2;
-        logo_x = 80 - 2 - (224/8);
+        if (machine == MCH_HERC || machine == MCH_MDA)
+            logo_x = 80 - 2 - (224/9);
+        else
+            logo_x = 80 - 2 - (224/8);
 
         if (cpu.pmode) E_Exit("BIOS error: STARTUP function called while in protected/vm86 mode");
 
-        if (IS_VGA_ARCH && !textsplash) {
-            rowheight = 16;
+        if (IS_VGA_ARCH) {
             reg_eax = 18;       // 640x480 16-color
             CALLBACK_RunRealInt(0x10);
-            DrawDOSBoxLogoVGA((unsigned int)logo_x*8u,(unsigned int)logo_y*(unsigned int)rowheight);
-        }
-        else if (machine == MCH_EGA && !textsplash && !ega200 && vga.mem.memsize >= (128*1024)) { /* not ega200 and at least 128KB of VRAM */
-            rowheight = 14;
-            reg_eax = 16; // 640x350 16-color
-
-            CALLBACK_RunRealInt(0x10);
-
-            // color correction: change Dark Puke Yellow to brown
-            IO_Read(0x3DA); IO_Read(0x3BA);
-            IO_Write(0x3C0,0x06);
-            IO_Write(0x3C0,0x14); // red=1 green=1 blue=0
-            IO_Read(0x3DA); IO_Read(0x3BA);
-            IO_Write(0x3C0,0x20);
-
-            DrawDOSBoxLogoVGA((unsigned int)logo_x*8u,(unsigned int)logo_y*(unsigned int)rowheight);
-        }
-        else if ((machine == MCH_CGA || machine == MCH_EGA || machine == MCH_MCGA || machine == MCH_PCJR || machine == MCH_AMSTRAD || machine == MCH_TANDY) && !textsplash) {
-            rowheight = 8;
-            reg_eax = 6;        // 640x200 2-color
-            CALLBACK_RunRealInt(0x10);
-
-            DrawDOSBoxLogoCGA6((unsigned int)logo_x*8u,(unsigned int)logo_y*(unsigned int)rowheight);
         }
         else if (machine == MCH_PC98) {
             // clear the graphics layer
@@ -10822,58 +10943,10 @@ startfunction:
             CALLBACK_RunRealInt(0x18);
 
             bios_pc98_posx = x;
-
-            reg_eax = 0x4200;   // setup 640x400 graphics
-            reg_ecx = 0xC000;
-            CALLBACK_RunRealInt(0x18);
-
-            // enable the 4th bitplane, for 16-color analog graphics mode.
-            // TODO: When we allow the user to emulate only the 8-color BGR digital mode,
-            //       logo drawing should use an alternate drawing method.
-            IO_Write(0x6A,0x01);    // enable 16-color analog mode (this makes the 4th bitplane appear)
-            IO_Write(0x6A,0x04);    // but we don't need the EGC graphics
-            // If we caught a game mid-page flip, set the display and VRAM pages back to zero
-            IO_Write(0xA4,0x00);    // display page 0
-            IO_Write(0xA6,0x00);    // write to page 0
-
-            // program a VGA-like color palette so we can re-use the VGA logo
-            for (unsigned int i=0;i < 16;i++) {
-                unsigned int bias = (i & 8) ? 0x5 : 0x0;
-
-                IO_Write(0xA8,i);   // DAC index
-                if (i != 6) {
-                    IO_Write(0xAA,((i & 2) ? 0xA : 0x0) + bias);    // green
-                    IO_Write(0xAC,((i & 4) ? 0xA : 0x0) + bias);    // red
-                    IO_Write(0xAE,((i & 1) ? 0xA : 0x0) + bias);    // blue
-                }
-                else { // brown #6 instead of puke yellow
-                    IO_Write(0xAA, 0x5 + bias);    // green
-                    IO_Write(0xAC, 0xA + bias);    // red
-                    IO_Write(0xAE, 0x0 + bias);    // blue
-                }
-            }
-
-            if (textsplash) {
-                unsigned int bo, lastline = 7;
-                for (unsigned int i=0; i<=lastline; i++) {
-                    for (unsigned int j=0; j<strlen(logostr[i]); j++) {
-                        bo = (((unsigned int)(i+2) * 80u) + (unsigned int)(j+0x36)) * 2u;
-                        mem_writew(0xA0000+bo,i==0&&j==0?0x300B:(i==0&&j==strlen(logostr[0])-1?0x340B:(i==lastline&&j==0?0x380B:(i==lastline&&j==strlen(logostr[lastline])-1?0x3C0B:(logostr[i][j]=='-'&&(i==0||i==lastline)?0x240B:(logostr[i][j]=='|'?0x260B:logostr[i][j]%0xff))))));
-                        mem_writeb(0xA2000+bo+1,0xE1);
-                    }
-                }
-            } else {
-                if (!control->opt_fastlaunch) DrawDOSBoxLogoPC98((unsigned int)logo_x*8u,(unsigned int)logo_y*(unsigned int)rowheight);
-                reg_eax = 0x4000;   // show the graphics layer (PC-98) so we can render the DOSBox-X logo
-                CALLBACK_RunRealInt(0x18);
-            }
         }
         else {
             reg_eax = 3;        // 80x25 text
             CALLBACK_RunRealInt(0x10);
-
-            // TODO: For CGA, PCjr, and Tandy, we could render a 4-color CGA version of the same logo.
-            //       And for MDA/Hercules, we could render a monochromatic ASCII art version.
         }
 
 #if defined(USE_TTF)
@@ -10889,6 +10962,163 @@ startfunction:
         }
 
         BIOS_Int10RightJustifiedPrint(x,y,msg);
+
+        {
+            png_bytep rows[1];
+            unsigned char *row = NULL;/*png_width*/
+            png_structp png_context = NULL;
+            png_infop png_info = NULL;
+            png_infop png_end = NULL;
+            png_uint_32 png_width = 0,png_height = 0;
+            int png_bit_depth = 0,png_color_type = 0,png_interlace = 0,png_filter = 0,png_compression = 0;
+            png_color *palette = NULL;
+            int palette_count = 0;
+            std::string user_filename;
+            unsigned int rowheight = 8;
+            const char *filename = NULL;
+            const unsigned char *inpng = NULL;
+            size_t inpng_size = 0;
+            FILE *png_fp = NULL;
+
+            /* If the user wants a custom logo, just put it in the same directory as the .conf file and have at it.
+             * Requirements: The PNG must be 1/2/4/8bpp with a color palette, not grayscale, not truecolor, and
+             * no alpha channel data at all. No interlacing. Must be 224x224 or smaller, and should fit the size
+             * indicated in the filename. There are multiple versions, one for each vertical resolution of common
+             * CGA/EGA/VGA/etc. modes: 480-line, 400-line, 350-line, and 200-line. All images other than the 480-line
+             * one have a non-square pixel aspect ratio. Please take that into consideration. */
+            if (IS_VGA_ARCH) {
+                if (logo) user_filename = std::string(logo) + "224x224.png";
+                filename = "dosbox224x224.png";
+                inpng_size = dosbox224x224_png_len;
+                inpng = dosbox224x224_png;
+                rowheight = 16;
+            }
+            else if (IS_PC98_ARCH || machine == MCH_MCGA) {
+                if (logo) user_filename = std::string(logo) + "224x186.png";
+                filename = "dosbox224x186.png";
+                inpng_size = dosbox224x186_png_len;
+                inpng = dosbox224x186_png;
+                rowheight = 16;
+            }
+            else if (IS_EGA_ARCH) {
+                if (ega200) {
+                    if (logo) user_filename = std::string(logo) + "224x93.png";
+                    filename = "dosbox224x93.png";
+                    inpng_size = dosbox224x93_png_len;
+                    inpng = dosbox224x93_png;
+                }
+                else {
+                    if (logo) user_filename = std::string(logo) + "224x163.png";
+                    filename = "dosbox224x163.png";
+                    inpng_size = dosbox224x163_png_len;
+                    inpng = dosbox224x163_png;
+                    rowheight = 14;
+                }
+            }
+            else if (machine == MCH_HERC || machine == MCH_MDA) {
+                if (logo) user_filename = std::string(logo) + "224x163.png";
+                filename = "dosbox224x163.png";
+                inpng_size = dosbox224x163_png_len;
+                inpng = dosbox224x163_png;
+                rowheight = 14;
+            }
+            else {
+                if (logo) user_filename = std::string(logo) + "224x93.png";
+                filename = "dosbox224x93.png";
+                inpng_size = dosbox224x93_png_len;
+                inpng = dosbox224x93_png;
+            }
+
+            if (png_fp == NULL && !user_filename.empty())
+                png_fp = fopen(user_filename.c_str(),"rb");
+            if (png_fp == NULL && filename != NULL)
+                png_fp = fopen(filename,"rb");
+
+            if (png_fp || inpng) {
+                png_context = png_create_read_struct(PNG_LIBPNG_VER_STRING,NULL/*err*/,NULL/*err fn*/,NULL/*warn fn*/);
+                if (png_context) {
+                    png_info = png_create_info_struct(png_context);
+                    if (png_info) {
+                        png_set_user_limits(png_context,320,320);
+                    }
+                }
+            }
+
+            if (png_context && png_info) {
+                if (png_fp) {
+                    LOG(LOG_MISC,LOG_DEBUG)("Using external file logo %s",filename);
+                    png_init_io(png_context,png_fp);
+                }
+                else if (inpng) {
+                    LOG(LOG_MISC,LOG_DEBUG)("Using built-in logo");
+                    BIOSLOGO_PNG_PTR = inpng;
+                    BIOSLOGO_PNG_FENCE = inpng + inpng_size;
+                    png_set_read_fn(png_context,NULL,BIOSLOGO_PNG_READ);
+                }
+                else {
+                    abort(); /* should not be here */
+                }
+
+                png_read_info(png_context,png_info);
+                png_get_IHDR(png_context,png_info,&png_width,&png_height,&png_bit_depth,&png_color_type,&png_interlace,&png_compression,&png_filter);
+
+                LOG(LOG_MISC,LOG_DEBUG)("BIOS png image: w=%u h=%u bitdepth=%u ct=%u il=%u compr=%u filt=%u",
+                    png_width,png_height,png_bit_depth,png_color_type,png_interlace,png_compression,png_filter);
+
+                if (png_width != 0 && png_height != 0 && png_bit_depth != 0 && png_bit_depth <= 8 &&
+                    (png_color_type&(PNG_COLOR_MASK_PALETTE|PNG_COLOR_MASK_COLOR)) == (PNG_COLOR_MASK_PALETTE|PNG_COLOR_MASK_COLOR)/*palatted color only*/ &&
+                    png_interlace == 0/*do not support interlacing*/) {
+                    LOG(LOG_MISC,LOG_DEBUG)("PNG accepted");
+                    /* please convert everything to 8bpp for us */
+                    png_set_strip_16(png_context);
+                    png_set_packing(png_context);
+                    png_get_PLTE(png_context,png_info,&palette,&palette_count);
+
+                    row = new unsigned char[png_width + 32];
+                    rows[0] = row;
+
+                    if (palette != 0 && palette_count > 0 && palette_count <= 256 && row != NULL) {
+                        textsplash = false;
+                        if (machine == MCH_HERC || machine == MCH_MDA)
+                            VGA_InitBiosLogo(png_width,png_height,logo_x*9,logo_y*rowheight);
+                        else
+                            VGA_InitBiosLogo(png_width,png_height,logo_x*8,logo_y*rowheight);
+
+                        {
+                            unsigned char tmp[256*3];
+                            for (unsigned int x=0;x < (unsigned int)palette_count;x++) {
+                                tmp[(x*3)+0] = palette[x].red;
+                                tmp[(x*3)+1] = palette[x].green;
+                                tmp[(x*3)+2] = palette[x].blue;
+                            }
+                            VGA_WriteBiosLogoPalette(0,palette_count,tmp);
+                        }
+
+                        for (unsigned int y=0;y < png_height;y++) {
+                            png_read_rows(png_context,rows,NULL,1);
+                            VGA_WriteBiosLogoBMP(y,row,png_width);
+                        }
+                        VGA_ShowBIOSLogo();
+                    }
+
+                    delete[] row;
+                }
+            }
+
+            if (png_context) png_destroy_read_struct(&png_context,&png_info,&png_end);
+            if (png_fp) fclose(png_fp);
+        }
+
+        if (machine == MCH_PC98 && textsplash) {
+            unsigned int bo, lastline = 7;
+            for (unsigned int i=0; i<=lastline; i++) {
+                for (unsigned int j=0; j<strlen(logostr[i]); j++) {
+                    bo = (((unsigned int)(i+2) * 80u) + (unsigned int)(j+0x36)) * 2u;
+                    mem_writew(0xA0000+bo,i==0&&j==0?0x300B:(i==0&&j==strlen(logostr[0])-1?0x340B:(i==lastline&&j==0?0x380B:(i==lastline&&j==strlen(logostr[lastline])-1?0x3C0B:(logostr[i][j]=='-'&&(i==0||i==lastline)?0x240B:(logostr[i][j]=='|'?0x260B:logostr[i][j]%0xff))))));
+                    mem_writeb(0xA2000+bo+1,0xE1);
+                }
+            }
+        }
         if (machine != MCH_PC98 && textsplash) {
             Bitu edx = reg_edx;
             //int oldx = x, oldy = y; UNUSED
@@ -10981,6 +11211,7 @@ startfunction:
                             case S3_Trio64V:    card = "S3 Trio64V+ SVGA"; break;
                             case S3_ViRGE:      card = "S3 ViRGE SVGA"; break;
                             case S3_ViRGEVX:    card = "S3 ViRGE VX SVGA"; break;
+                            case S3_Generic:    card = "S3"; break;
                         }
                         break;
                     case SVGA_ATI:
@@ -11078,6 +11309,89 @@ startfunction:
             BIOS_Int10RightJustifiedPrint(x,y,"ISA Plug & Play BIOS active\n");
         }
 
+        if (*logo_text) {
+            const size_t max_w = 76;
+            const char *s = logo_text;
+            const int saved_y = y;
+            size_t max_h;
+            char tmp[81];
+            int x,y;
+
+            x = 0; /* use it here as index to tmp[] */
+            if (IS_VGA_ARCH) /* VGA 640x480 has 30 lines (480/16) not 25 */
+                max_h = 30;
+            else
+                max_h = 25;
+            y = max_h - 3;
+
+            y--;
+            BIOS_Int10RightJustifiedPrint(x+2,y,"\n"); /* sync cursor */
+
+            while (*s) {
+                bool newline = false;
+
+                assert((size_t)x < max_w);
+                if (isalpha(*s) || isdigit(*s)) {
+                    size_t wi = 1;/*we already know s[0] fits the criteria*/
+                    while (s[wi] != 0 && (isalpha(s[wi]) || isdigit(s[wi]))) wi++;
+
+                    if (wi >= 24) { /* don't let overlong words crowd out the text */
+                        if (((size_t)x+wi) > max_w)
+                            wi = max_w - (size_t)x;
+                    }
+
+                    if (((size_t)x+wi) < max_w) {
+                        memcpy(tmp+x,s,wi);
+                        x += wi;
+                        s += wi;
+                    }
+                    else {
+                        newline = true;
+                    }
+                }
+                else if (*s == ' ') {
+                    if ((size_t)x < max_w) tmp[x++] = *s++;
+
+                    if ((size_t)x == max_w) {
+                        while (*s == ' ') s++;
+                        newline = true;
+                    }
+                }
+                else if (*s == '\\') {
+                    s++;
+                    if (*s == 'n') {
+                        newline = true; /* \n */
+                        s++;
+                    }
+                    else {
+                        s++;
+                    }
+                }
+                else {
+                    tmp[x++] = *s++;
+                }
+
+                assert((size_t)x <= max_w);
+                if ((size_t)x >= max_w || newline) {
+                    tmp[x] = 0;
+                    BIOS_Int10RightJustifiedPrint(x+2,y,tmp);
+                    x = 0;
+                    BIOS_Int10RightJustifiedPrint(x+2,y,"\n"); /* next line, which increments y */
+                    if ((size_t)y >= max_h) break;
+                }
+            }
+
+            if (x != 0 && (size_t)y < max_h) {
+                tmp[x] = 0;
+                BIOS_Int10RightJustifiedPrint(x+2,y,tmp);
+                x = 0;
+                BIOS_Int10RightJustifiedPrint(x+2,y,"\n"); /* next line, which increments y */
+            }
+
+            y = saved_y - 1;
+            BIOS_Int10RightJustifiedPrint(x+2,y,"\n"); /* sync cursor */
+        }
+
 #if !defined(C_EMSCRIPTEN)
         BIOS_Int10RightJustifiedPrint(x,y,"\nHit SPACEBAR to pause at this screen\n", false, true);
         BIOS_Int10RightJustifiedPrint(x,y,"\nPress DEL to enter BIOS setup screen\n", false, true);
@@ -11162,6 +11476,7 @@ startfunction:
 
                 if ((machine != MCH_PC98 && reg_ax == 0x5300/*DEL*/) || (machine == MCH_PC98 && reg_ax == 0x3900)) {
                     bios_setup = true;
+                    VGA_FreeBiosLogo();
                     showBIOSSetup(card, x, y);
                     break;
                 }
@@ -11302,6 +11617,7 @@ startfunction:
         }
 #endif
 
+        VGA_FreeBiosLogo();
         if (machine == MCH_PC98) {
             reg_eax = 0x4100;   // hide the graphics layer (PC-98)
             CALLBACK_RunRealInt(0x18);
@@ -12316,7 +12632,7 @@ void ROMBIOS_Init() {
     /* and the BIOS alias at the top of memory (TODO: what about 486/Pentium emulation where the BIOS at the 4GB top is different
      * from the BIOS at the legacy 1MB boundary because of shadowing and/or decompressing from ROM at boot? */
     {
-        uint64_t top = (uint64_t)1UL << (uint64_t)MEM_get_address_bits();
+        uint64_t top = (uint64_t)1UL << (uint64_t)MEM_get_address_bits4GB();
         if (top >= ((uint64_t)1UL << (uint64_t)21UL)) { /* 2MB or more */
             unsigned long alias_base,alias_end;
 
@@ -12364,6 +12680,7 @@ void ROMBIOS_Init() {
 			    LOG_MSG("Will load IBM ROM BASIC to %05lx-%05lx",(unsigned long)ibm_rom_basic_base,(unsigned long)(ibm_rom_basic_base+ibm_rom_basic_size-1));
 			    Bitu base = ROMBIOS_GetMemory(ibm_rom_basic_size,"IBM ROM BASIC",1u/*page align*/,ibm_rom_basic_base);
 			    rombios_alloc.setMaxDynamicAllocationAddress(ibm_rom_basic_base - 1);
+			    (void)base;
 
 			    FILE *fp = fopen(ibm_rom_basic.c_str(),"rb");
 			    if (fp != NULL) {
@@ -12502,6 +12819,13 @@ void ROMBIOS_Init() {
 //! \brief Updates the state of a lockable key.
 void UpdateKeyWithLed(int nVirtKey, int flagAct, int flagLed);
 
+bool IsSafeToMemIOOnBehalfOfGuest()
+{
+    if(cpu.pmode) return false; // protected mode (including virtual 8086 mode): NO
+    if(dos_kernel_disabled) return false; // guest OS not running under our own DOS kernel: NO
+    return true;
+}
+
 void BIOS_SynchronizeNumLock()
 {
 #if defined(WIN32)
@@ -12557,3 +12881,4 @@ void UpdateKeyWithLed(int nVirtKey, int flagAct, int flagLed)
 
 #endif
 }
+
