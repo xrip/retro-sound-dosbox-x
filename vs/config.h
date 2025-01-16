@@ -23,11 +23,11 @@
 /* TODO: Can we drop this to 0x500 for Windows 2000? */
 /* TODO: What is the minimum appropriate WINVER for HX DOS extender? */
 #ifndef WINVER
-#define WINVER 0x0501
+#define WINVER 0x601
 #endif
 
 #ifndef _WIN32_WINNT
-#define _WIN32_WINNT 0x0501
+#define _WIN32_WINNT 0x601
 #endif
 
 /* Define if building universal (internal helper macro) */
@@ -128,7 +128,7 @@
 #define C_LIBZ 1
 
 /* Define to 1 to enable internal modem support, requires SDL_net */
-#define C_MODEM 1
+#define C_MODEM 0
 
 /* Define to 1 to enable internal printer redirection support*/
 #define C_PRINTER 1

@@ -1263,6 +1263,8 @@ void DOSBOX_RealInit() {
         if(hThread == NULL) {
             LOG(LOG_MISC, LOG_DEBUG)("Error creating sound thread");
         }
+        Sleep(10);
+        Enqueue(0xffff); // Reset retro-sound
     }
     DOSBoxMenu::item *item;
 

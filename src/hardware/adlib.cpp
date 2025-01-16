@@ -125,6 +125,8 @@ namespace OPL3 {
 	struct Handler : public Adlib::Handler {
 		void WriteReg( uint32_t reg, uint8_t val ) override {
 			adlib_write(reg,val);
+            Enqueue((reg & 0xff) << 8 | 4 << 4 | 0b0000 | (reg >> 8) & 1);
+            Enqueue((val & 0xff) << 8 | 4 << 4 | 0b0010 | (reg >> 8) & 1);
 		}
 		uint32_t WriteAddr( uint32_t port, uint8_t val ) override {
 			adlib_write_index(port, val);
