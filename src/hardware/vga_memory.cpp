@@ -36,8 +36,6 @@
 #include "zipfile.h"
 #include "src/ints/int10.h"
 
-uint32_t MEM_get_address_bits();
-
 unsigned char pc98_pegc_mmio[0x200] = {0}; /* PC-98 memory-mapped PEGC registers at E0000h */
 uint32_t pc98_pegc_banks[2] = {0x0000,0x0000}; /* bank switching offsets */
 bool enveten = false, TTF_using(void);
@@ -54,23 +52,6 @@ extern bool isa_memory_hole_15mb;
 extern unsigned int vbe_window_granularity;
 extern unsigned int vbe_window_size;
 extern const char* RunningProgram;
-
-#ifndef C_VGARAM_CHECKED
-#define C_VGARAM_CHECKED 1
-#endif
-
-#if C_VGARAM_CHECKED
-// Checked linear offset
-#define CHECKED(v) ((v)&vga.mem.memmask)
-// Checked planar offset (latched access)
-#define CHECKED2(v) ((v)&(vga.mem.memmask>>2))
-#else
-#define CHECKED(v) (v)
-#define CHECKED2(v) (v)
-#endif
-
-#define CHECKED3(v) ((v)&vga.mem.memmask)
-#define CHECKED4(v) ((v)&(vga.mem.memmask>>2))
 
 uint32_t tandy_128kbase = 0x80000;
 
@@ -2054,11 +2035,11 @@ public:
 	VGA_Map_Handler(const unsigned int fl) : PageHandler(fl) {}
 	HostPt GetHostReadPt(PageNum phys_page) override {
 		phys_page-=vgapages.base;
-		return &vga.mem.linear[CHECKED3(vga.svga.bank_read_full+phys_page*4096)];
+		return &vga.mem.linear[(vga.svga.bank_read_full+phys_page*4096)&vga.mem.memmask];
 	}
 	HostPt GetHostWritePt(PageNum phys_page) override {
 		phys_page-=vgapages.base;
-		return &vga.mem.linear[CHECKED3(vga.svga.bank_write_full+phys_page*4096)];
+		return &vga.mem.linear[(vga.svga.bank_write_full+phys_page*4096)&vga.mem.memmask];
 	}
 };
 
@@ -2090,7 +2071,7 @@ public:
 	HostPt GetHostReadPt( PageNum phys_page ) override {
 		phys_page -= vga.lfb.page;
 		phys_page &= vga.mem.memmask >> 12u;
-		return &vga.mem.linear[CHECKED3(phys_page * 4096)];
+		return &vga.mem.linear[(phys_page*4096)&vga.mem.memmask];
 	}
 	HostPt GetHostWritePt( PageNum phys_page ) override {
 		return GetHostReadPt( phys_page );
@@ -2512,8 +2493,6 @@ void pc98_gdc_vwritew(const uint32_t addr,const uint16_t b) {
 void VGA_ChangedBank(void) {
 	VGA_SetupHandlers();
 }
-
-uint32_t MEM_get_address_bits4GB();
 
 void MEM_ResetPageHandler_Unmapped(Bitu phys_page, Bitu pages);
 void MEM_ResetPageHandler_RAM(Bitu phys_page, Bitu pages);
