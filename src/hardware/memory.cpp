@@ -109,7 +109,7 @@ class ACPIPageHandler : public PageHandler {
 	public:
 		ACPIPageHandler() : PageHandler(PFLAG_NOCODE|PFLAG_READABLE|PFLAG_WRITEABLE) {}
 		ACPIPageHandler(Bitu flags) : PageHandler(flags) {}
-		HostPt GetHostReadPt(Bitu phys_page) override {
+		HostPt GetHostReadPt(PageNum phys_page) override {
 			assert(ACPI_buffer != NULL);
 			assert(ACPI_buffer_size >= 4096);
 			phys_page -= (ACPI_BASE >> 12);
@@ -117,7 +117,7 @@ class ACPIPageHandler : public PageHandler {
 			if (phys_page >= (ACPI_buffer_size >> 12)) phys_page = (ACPI_buffer_size >> 12) - 1;
 			return ACPI_buffer + (phys_page << 12);
 		}
-		HostPt GetHostWritePt(Bitu phys_page) override {
+		HostPt GetHostWritePt(PageNum phys_page) override {
 			assert(ACPI_buffer != NULL);
 			assert(ACPI_buffer_size >= 4096);
 			phys_page -= (ACPI_BASE >> 12);
@@ -309,13 +309,13 @@ class RAMPageHandler : public PageHandler {
 public:
     RAMPageHandler() : PageHandler(PFLAG_READABLE|PFLAG_WRITEABLE) {}
     RAMPageHandler(Bitu flags) : PageHandler(flags) {}
-    HostPt GetHostReadPt(Bitu phys_page) override {
+    HostPt GetHostReadPt(PageNum phys_page) override {
         if (!a20_fast_changeable || (phys_page & (~0xFul/*64KB*/)) == 0x100ul/*@1MB*/)
             return MemBase+(phys_page&memory.mem_alias_pagemask_active)*MEM_PAGESIZE;
 
         return MemBase+phys_page*MEM_PAGESIZE;
     }
-    HostPt GetHostWritePt(Bitu phys_page) override {
+    HostPt GetHostWritePt(PageNum phys_page) override {
         if (!a20_fast_changeable || (phys_page & (~0xFul/*64KB*/)) == 0x100ul/*@1MB*/)
             return MemBase+(phys_page&memory.mem_alias_pagemask_active)*MEM_PAGESIZE;
 
@@ -328,10 +328,10 @@ public:
     ROMAliasPageHandler() {
         flags=PFLAG_READABLE|PFLAG_HASROM;
     }
-    HostPt GetHostReadPt(Bitu phys_page) override {
+    HostPt GetHostReadPt(PageNum phys_page) override {
         return MemBase+((phys_page&0xF)+0xF0)*MEM_PAGESIZE;
     }
-    HostPt GetHostWritePt(Bitu phys_page) override {
+    HostPt GetHostWritePt(PageNum phys_page) override {
         return MemBase+((phys_page&0xF)+0xF0)*MEM_PAGESIZE;
     }
 };
@@ -827,13 +827,13 @@ class Mem4GBPageHandler : public PageHandler {
 	public:
 		Mem4GBPageHandler() : PageHandler(PFLAG_READABLE|PFLAG_WRITEABLE) {}
 		Mem4GBPageHandler(Bitu flags) : PageHandler(flags) {}
-		HostPt GetHostReadPt(Bitu phys_page) override {
+		HostPt GetHostReadPt(PageNum phys_page) override {
 			assert(memory_file_base != NULL);
 			const size_t ofs = size_t(phys_page) * size_t(4096u);
 			assert(ofs < memory_file_size);
 			return (unsigned char*)memory_file_base + ofs;
 		}
-		HostPt GetHostWritePt(Bitu phys_page) override {
+		HostPt GetHostWritePt(PageNum phys_page) override {
 			assert(memory_file_base != NULL);
 			const size_t ofs = size_t(phys_page) * size_t(4096u);
 			assert(ofs < memory_file_size);
@@ -1960,6 +1960,8 @@ void ShutDownRAM(Section * sec) {
         else {
 #if C_GAMELINK
             GameLink::FreeRAM(MemBase);
+#elif C_HAVE_MMAP
+            munmap(MemBase,MemSize);
 #else
             delete [] MemBase;
 #endif
@@ -2338,6 +2340,9 @@ void Init_RAM() {
         }
 #if C_GAMELINK
         MemBase = GameLink::AllocRAM(memory.pages*4096);
+#elif C_HAVE_MMAP
+        MemBase = (uint8_t*)mmap(NULL,memory.pages*4096u,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,0,0);
+        if (MemBase == (uint8_t*)MAP_FAILED) E_Exit("Failed to mmap allocate memory");
 #else // C_GAMELINK
         MemBase = new(std::nothrow) uint8_t[memory.pages*4096];
 #endif // C_GAMELINK
@@ -2615,6 +2620,137 @@ Bitu MEM_PageMask(void) {
 
 Bitu MEM_PageMaskActive(void) {
     return memory.mem_alias_pagemask_active;
+}
+
+// Physical DEVICE access. This is different from phys_readb/phys_writeb because
+// those functions can only access system RAM, and is not affected by any device
+// mappings or page tables.
+
+uint8_t physdev_readb(const PhysPt64 addr) {
+	const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+	PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+	if (ph->flags & PFLAG_READABLE)
+		return *((uint8_t*)(ph->GetHostReadPt(pagenum)+((unsigned int)addr&0xFFFu)));
+
+	/* This hack is necessary because of the weird way that CPU linear addresses
+	 * make their way down to the hardware read/write callbacks */
+	const uint32_t orig = paging.tlb.phys_page[pagenum];
+	paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+	const uint8_t ch = ph->readb((PhysPt)addr); /* WARNING: 4GB wraparound here */
+	paging.tlb.phys_page[pagenum] = orig;
+	return ch;
+}
+
+uint16_t physdev_readw(const PhysPt64 addr) {
+	if (((unsigned int)addr&0xFFFu) <= 0xFFEu) {
+		const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+		PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+		if (ph->flags & PFLAG_READABLE)
+			return *((uint16_t*)(ph->GetHostReadPt(pagenum)+((unsigned int)addr&0xFFFu)));
+
+		/* This hack is necessary because of the weird way that CPU linear addresses
+		 * make their way down to the hardware read/write callbacks */
+		const uint32_t orig = paging.tlb.phys_page[pagenum];
+		paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+		const uint16_t ch = ph->readw((PhysPt)addr); /* WARNING: 4GB wraparound here */
+		paging.tlb.phys_page[pagenum] = orig;
+		return ch;
+	}
+	else {
+		return	 (uint16_t)physdev_readb(addr) +
+			((uint16_t)physdev_readb(addr+1u) << (uint16_t)8u);
+	}
+}
+
+uint32_t physdev_readd(const PhysPt64 addr) {
+	if (((unsigned int)addr&0xFFFu) <= 0xFFCu) {
+		const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+		PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+		if (ph->flags & PFLAG_READABLE)
+			return *((uint32_t*)(ph->GetHostReadPt(pagenum)+((unsigned int)addr&0xFFFu)));
+
+		/* This hack is necessary because of the weird way that CPU linear addresses
+		 * make their way down to the hardware read/write callbacks */
+		const uint32_t orig = paging.tlb.phys_page[pagenum];
+		paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+		const uint32_t ch = ph->readd((PhysPt)addr); /* WARNING: 4GB wraparound here */
+		paging.tlb.phys_page[pagenum] = orig;
+		return ch;
+	}
+	else {
+		return	 (uint32_t)physdev_readb(addr) +
+			((uint32_t)physdev_readb(addr+1u) << (uint32_t)8u) +
+			((uint32_t)physdev_readb(addr+2u) << (uint32_t)16u) +
+			((uint32_t)physdev_readb(addr+3u) << (uint32_t)24u);
+	}
+}
+
+void physdev_writeb(const PhysPt64 addr,const uint8_t val) {
+	const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+	PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+	if (ph->flags & PFLAG_WRITEABLE) {
+		*((uint8_t*)(ph->GetHostReadPt(pagenum)+((unsigned int)addr&0xFFFu))) = val;
+	}
+	else {
+		/* This hack is necessary because of the weird way that CPU linear addresses
+		 * make their way down to the hardware read/write callbacks */
+		const uint32_t orig = paging.tlb.phys_page[pagenum];
+		paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+		ph->writeb((PhysPt)addr,val); /* WARNING: 4GB wraparound here */
+		paging.tlb.phys_page[pagenum] = orig;
+	}
+}
+
+void physdev_writew(const PhysPt64 addr,const uint16_t val) {
+	if (((unsigned int)addr&0xFFFu) <= 0xFFEu) {
+		const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+		PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+		if (ph->flags & PFLAG_WRITEABLE) {
+			*((uint16_t*)(ph->GetHostWritePt(pagenum)+((unsigned int)addr&0xFFFu))) = val;
+		}
+		else {
+			/* This hack is necessary because of the weird way that CPU linear addresses
+			 * make their way down to the hardware read/write callbacks */
+			const uint32_t orig = paging.tlb.phys_page[pagenum];
+			paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+			ph->writew((PhysPt)addr,val); /* WARNING: 4GB wraparound here */
+			paging.tlb.phys_page[pagenum] = orig;
+		}
+	}
+	else {
+		physdev_writeb(addr+0u,val);
+		physdev_writeb(addr+1u,val >> 8u);
+	}
+}
+
+void physdev_writed(const PhysPt64 addr,const uint32_t val) {
+	if (((unsigned int)addr&0xFFFu) <= 0xFFCu) {
+		const PageNum pagenum = (PageNum)(addr >> (PhysPt64)12u);
+		PageHandler *ph = MEM_GetPageHandler(pagenum);
+
+		if (ph->flags & PFLAG_WRITEABLE) {
+			*((uint32_t*)(ph->GetHostWritePt(pagenum)+((unsigned int)addr&0xFFFu))) = val;
+		}
+		else {
+			/* This hack is necessary because of the weird way that CPU linear addresses
+			 * make their way down to the hardware read/write callbacks */
+			const uint32_t orig = paging.tlb.phys_page[pagenum];
+			paging.tlb.phys_page[pagenum] = (uint32_t)pagenum;
+			ph->writed((PhysPt)addr,val); /* WARNING: 4GB wraparound here */
+			paging.tlb.phys_page[pagenum] = orig;
+		}
+	}
+	else {
+		physdev_writeb(addr+0u,val);
+		physdev_writeb(addr+1u,val >> 8u);
+		physdev_writeb(addr+2u,val >> 16u);
+		physdev_writeb(addr+3u,val >> 24u);
+	}
 }
 
 //save state support

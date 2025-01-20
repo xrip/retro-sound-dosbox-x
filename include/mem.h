@@ -38,17 +38,18 @@
 typedef uint8_t const *       ConstHostPt;        /* host (virtual) memory address aka ptr */
 typedef uint8_t *             HostPt;             /* host (virtual) memory address aka ptr */
 
-typedef uint32_t              PhysPt;      /* guest physical memory pointer */
-typedef uint32_t              LinearPt;    /* guest linear memory address */
-typedef uint32_t              RealPt;      /* guest real-mode memory address (16:16 -> seg:offset) */
-typedef uint16_t              SegmentVal;  /* guest segment value */
+typedef uint32_t              PhysPt;             /* guest physical memory pointer */
+typedef uint32_t              LinearPt;           /* guest linear memory address */
+typedef uint32_t              RealPt;             /* guest real-mode memory address (16:16 -> seg:offset) */
+typedef uint16_t              SegmentVal;         /* guest segment value */
+typedef uint32_t              PageNum;            /* page frame number */
 
-typedef uint64_t              PhysPt64;    /* guest physical memory pointer */
+typedef uint64_t              PhysPt64;           /* guest physical memory pointer */
 
-typedef int32_t              MemHandle;
+typedef int32_t               MemHandle;
 
-extern HostPt               MemBase;
-extern size_t               MemSize;
+extern HostPt                 MemBase;
+extern size_t                 MemSize;
 
 HostPt                      GetMemBase(void);
 bool                        MEM_A20_Enabled(void);
@@ -336,5 +337,12 @@ static INLINE void RealSetVec(const uint8_t vec,const RealPt pt,RealPt &old) {
     old = mem_readd(addr);
     mem_writed(addr,pt);
 }
+
+uint8_t physdev_readb(const PhysPt64 addr);
+uint16_t physdev_readw(const PhysPt64 addr);
+uint32_t physdev_readd(const PhysPt64 addr);
+void physdev_writeb(const PhysPt64 addr,const uint8_t val);
+void physdev_writew(const PhysPt64 addr,const uint16_t val);
+void physdev_writed(const PhysPt64 addr,const uint32_t val);
 
 #endif
