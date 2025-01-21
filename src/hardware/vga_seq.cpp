@@ -16,6 +16,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
  */
 
+#define VGA_INTERNAL
 
 #include "dosbox.h"
 #include "inout.h"
@@ -28,8 +29,6 @@ extern bool vga_ignore_extended_memory_bit;
 
 extern bool vga_render_on_demand;
 void VGA_RenderOnDemandUpTo(void);
-
-#define seq(blah) vga.seq.blah
 
 Bitu read_p3c4(Bitu /*port*/,Bitu /*iolen*/) {
 	return seq(index);
@@ -87,9 +86,6 @@ void write_p3c4(Bitu /*port*/,Bitu val,Bitu /*iolen*/) {
 	seq(index)=(uint8_t)val;
 }
 
-void VGA_SequReset(bool reset);
-void VGA_Screenstate(bool enabled);
-
 unsigned int VGA_ComplexityCheck_MAP_MASK(void) {
 	return vga.complexity.setf(VGACMPLX_MAP_MASK,(vga.seq.map_mask & 0xF) != 0xF && vga.config.chained); // if any bitplane is masked off and chained mode
 }
@@ -146,13 +142,11 @@ void write_p3c5(Bitu /*port*/,Bitu val,Bitu iolen) {
 	switch(seq(index)) {
 	case 0:		/* Reset */
 		if (vga_render_on_demand) VGA_RenderOnDemandUpTo();
-		if((seq(reset)^val)&0x3) VGA_SequReset((val&0x3)!=0x3);
 		seq(reset)=(uint8_t)val;
 		break;
 	case 1:		/* Clocking Mode */
 		if (val!=seq(clocking_mode)) {
 			if (vga_render_on_demand) VGA_RenderOnDemandUpTo();
-			if((seq(clocking_mode)^val)&0x20) VGA_Screenstate((val&0x20)==0);
 			// don't resize if only the screen off bit was changed
 			if ((val&(~0x20u))!=(seq(clocking_mode)&(~0x20u))) {
 				seq(clocking_mode)=(uint8_t)val;

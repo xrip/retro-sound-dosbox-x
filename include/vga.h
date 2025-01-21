@@ -803,9 +803,13 @@ void VGA_CaptureStartNextFrame(void);
 void VGA_CaptureMarkError(void);
 bool VGA_CaptureValidateCurrentFrame(void);
 void SD3_Reset(bool enable);
+void SetClock_S3(Bitu which,Bitu target);
 
 // Amount of video memory required for a mode, implemented in int10_modes.cpp
 Bitu VideoModeMemSize(Bitu mode);
+bool VGA_DetermineMode_IsDCGA(void);
+void VGA_DetermineMode_StandardVGA(void);
+void VGA_DetermineMode_S3(void);
 
 extern uint32_t ExpandTable[256];
 extern uint32_t FillTable[16];
@@ -818,6 +822,9 @@ extern uint32_t TXT_FG_Table[16];
 extern uint32_t TXT_BG_Table[16];
 extern uint32_t Expand16Table[4][16];
 extern uint32_t Expand16BigTable[0x10000];
+
+extern int hack_lfb_yadjust;
+extern int hack_lfb_xadjust;
 
 void VGA_DAC_UpdateColorPalette();
 
@@ -923,5 +930,27 @@ static inline unsigned char *pc98_vram_256bank_from_window(const unsigned int b)
 }
 
 #define VRAM98_TEXT         ( pc98_vram_text() )
+
+#ifdef VGA_INTERNAL
+#define gfx(blah) vga.gfx.blah
+#define seq(blah) vga.seq.blah
+#define crtc(blah) vga.crtc.blah
+#endif
+
+#define IS_RESET ((vga.seq.reset&0x3)!=0x3)
+#define IS_SCREEN_ON ((vga.seq.clocking_mode&0x20)==0)
+
+bool J3_IsCga4Dcga();
+void UpdateCGAFromSaveState(void);
+void INT10_PC98_CurMode_Relocate(void);
+unsigned int VGA_ComplexityCheck_ODDEVEN(void);
+void VGA_VsyncUpdateMode(VGA_Vsync vsyncmode);
+uint32_t GetReportedVideoMemorySize(void);
+extern void VGA_TweakUserVsyncOffset(float val);
+void VGA_UnsetupMisc(void);
+void VGA_UnsetupAttr(void);
+void VGA_UnsetupDAC(void);
+void VGA_UnsetupGFX(void);
+void VGA_UnsetupSEQ(void);
 
 #endif
