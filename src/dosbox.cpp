@@ -1568,7 +1568,7 @@ void DOSBOX_SetupConfigSections(void) {
     const char *mt32reverbTimes[] = {"0", "1", "2", "3", "4", "5", "6", "7", nullptr};
     const char *mt32reverbLevels[] = {"0", "1", "2", "3", "4", "5", "6", "7", nullptr};
     const char* gustypes[] = { "classic", "classic37", "max", "interwave", nullptr };
-    const char* sbtypes[] = { "sb1", "sb2", "sbpro1", "sbpro2", "sb16", "sb16vibra", "gb", "ess688", "ess1688", "reveal_sc400", "none", nullptr };
+    const char* sbtypes[] = { "sb1", "sb1.0", "sb1.5", "sb2", "sb2.0", "sb2.01", "sbpro1", "sbpro2", "sb16", "sb16vibra", "gb", "ess688", "ess1688", "reveal_sc400", "none", nullptr };
     const char* cms_settings[] = { "on", "off", "auto", nullptr };
     const char* oplmodes[] = { "auto", "opl2", "dualopl2", "opl3", "opl3gold", "none", "hardware", "hardwaregb", "esfm", nullptr };
     const char* serials[] = { "dummy", "disabled", "modem", "nullmodem", "serialmouse", "directserial", "log", "file", nullptr };
@@ -2164,7 +2164,7 @@ void DOSBOX_SetupConfigSections(void) {
         "       starting with cputype=8086 will use a memalias of 20 even if you later change cputype to 386.\n"
         "    24: 16MB aliasing. Common on 386SX systems (CPU had 24 external address bits)\n"
         "        or 386DX and 486 systems where the CPU communicated directly with the ISA bus (A24-A31 tied off)\n"
-        "    26: 64MB aliasing. Some 486s had only 26 external address bits, some motherboards tied off A26-A31\n"
+        "    26: 64MB aliasing. Some 486 clones (and 386EX/CX) had only 26 external address bits, some motherboards tied off A26-A31\n"
         "    32: 4GB aliasing. This is normal for most 486/Pentium and later systems and is the default for most values of cputype.\n"
         "    36: 64GB aliasing. Recommended if you are emulating more than 3.5GB of RAM and Pentium Pro/II Page Size Extensions.\n"
         "    40: 1TB aliasing. Recommended if you are emulating more than 63GB of RAM and Pentium Pro/II Page Size Extensions.");

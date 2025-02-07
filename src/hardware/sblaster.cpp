@@ -98,7 +98,8 @@ bool MIDI_Available(void);
 #define SB_SH_MASK  ((1 << SB_SH)-1)
 
 enum {DSP_S_RESET,DSP_S_RESET_WAIT,DSP_S_NORMAL,DSP_S_HIGHSPEED};
-enum SB_TYPES {SBT_NONE=0,SBT_1=1,SBT_PRO1=2,SBT_2=3,SBT_PRO2=4,SBT_16=6,SBT_GB=7}; /* TODO: Need SB 2.0 vs SB 2.01 */
+enum SB_TYPES {SBT_NONE=0,SBT_GB=1,SBT_1=2,SBT_2=3,SBT_PRO1=4,SBT_PRO2=5,SBT_16=6};
+enum SB_SUBTYPES {SBST_NONE,SBST_100,SBST_105,SBST_200,SBST_201};
 enum REVEAL_SC_TYPES {RSC_NONE=0,RSC_SC400=1};
 enum SB_IRQS {SB_IRQ_8,SB_IRQ_16,SB_IRQ_MPU};
 enum ESS_TYPES {ESS_NONE=0,ESS_688=1,ESS_1688=2};
@@ -182,6 +183,7 @@ struct SB_INFO {
     uint8_t sc400_jumper_status_2;
     DSP_MODES mode;
     SB_TYPES type;
+    SB_SUBTYPES subtype;
     REVEAL_SC_TYPES reveal_sc_type; // Reveal SC400 type
     ESS_TYPES ess_type; // ESS chipset emulation, to be set only if type == SBT_PRO2
     bool ess_extended_mode;
@@ -1535,6 +1537,7 @@ Bitu DEBUG_EnableDebugger(void);
 
 #define DSP_SB16_ONLY if (sb.type != SBT_16) { LOG(LOG_SB,LOG_ERROR)("DSP:Command %2X requires SB16",sb.dsp.cmd); break; }
 #define DSP_SB2_ABOVE if (sb.type <= SBT_1) { LOG(LOG_SB,LOG_ERROR)("DSP:Command %2X requires SB2 or above",sb.dsp.cmd); break; }
+#define DSP_SB201_ABOVE if (sb.type <= SBT_1 || (sb.type == SBT_2 && sb.subtype == SBST_200)) { LOG(LOG_SB,LOG_ERROR)("DSP:Command %2X requires SB2.01 or above",sb.dsp.cmd); break; }
 
 static unsigned int ESS_DMATransferCount() {
     unsigned int r;
@@ -1948,7 +1951,7 @@ static void DSP_DoCommand(void) {
         }
         break;
     case 0x99:  /* Single Cycle 8-Bit DMA High speed DAC */
-        DSP_SB2_ABOVE;
+        DSP_SB201_ABOVE;
         /* fall through */
     case 0x24:  /* Single Cycle 8-Bit DMA ADC */
         sb.dma.recording=true;
@@ -1956,13 +1959,14 @@ static void DSP_DoCommand(void) {
         LOG(LOG_SB,LOG_WARN)("Guest recording audio using SB/SBPro commands");
         break;
     case 0x98:  /* Auto Init 8-bit DMA High Speed */
+        DSP_SB201_ABOVE;
     case 0x2c:  /* Auto Init 8-bit DMA */
         DSP_SB2_ABOVE; /* Note: 0x98 is documented only for DSP ver.2.x and 3.x, not 4.x */
         sb.dma.recording=true;
         DSP_PrepareDMA_Old(DSP_DMA_8,true,false,/*hispeed*/(sb.dsp.cmd&0x80)!=0);
         break;
     case 0x91:  /* Single Cycle 8-Bit DMA High speed DAC */
-        DSP_SB2_ABOVE;
+        DSP_SB201_ABOVE;
         /* fall through */
     case 0x14:  /* Single Cycle 8-Bit DMA DAC */
     case 0x15:  /* Wari hack. Waru uses this one instead of 0x14, but some weird stuff going on there anyway */
@@ -1971,6 +1975,7 @@ static void DSP_DoCommand(void) {
         DSP_PrepareDMA_Old(DSP_DMA_8,false,false,/*hispeed*/(sb.dsp.cmd&0x80)!=0);
         break;
     case 0x90:  /* Auto Init 8-bit DMA High Speed */
+        DSP_SB201_ABOVE;
     case 0x1c:  /* Auto Init 8-bit DMA */
         DSP_SB2_ABOVE; /* Note: 0x90 is documented only for DSP ver.2.x and 3.x, not 4.x */
         sb.dma.recording=false;
@@ -2221,9 +2226,13 @@ static void DSP_DoCommand(void) {
         DSP_FlushData();
         switch (sb.type) {
         case SBT_1:
-            DSP_AddData(0x1);DSP_AddData(0x05);break;
+            if (sb.subtype == SBST_100) { DSP_AddData(0x1);DSP_AddData(0x0); }
+            else { DSP_AddData(0x1);DSP_AddData(0x5); }
+            break;
         case SBT_2:
-            DSP_AddData(0x2);DSP_AddData(0x1);break;
+            if (sb.subtype == SBST_200) { DSP_AddData(0x2);DSP_AddData(0x0); }
+            else { DSP_AddData(0x2);DSP_AddData(0x1); }
+            break;
         case SBT_PRO1:
             DSP_AddData(0x3);DSP_AddData(0x0);break;
         case SBT_PRO2:
@@ -3665,10 +3674,15 @@ private:
         sb.ess_type = ESS_NONE;
         sb.reveal_sc_type = RSC_NONE;
         sb.ess_extended_mode = false;
+        sb.subtype = SBST_NONE;
         const char * sbtype=config->Get_string("sbtype");
         if (control->opt_silent) type = SBT_NONE;
-        else if (!strcasecmp(sbtype,"sb1")) type=SBT_1;
-        else if (!strcasecmp(sbtype,"sb2")) type=SBT_2;
+        else if (!strcasecmp(sbtype,"sb1.0")) { type=SBT_1; sb.subtype=SBST_100; }
+        else if (!strcasecmp(sbtype,"sb1.5")) { type=SBT_1; sb.subtype=SBST_105; }
+        else if (!strcasecmp(sbtype,"sb1")) { type=SBT_1; sb.subtype=SBST_105; } /* DOSBox SVN compat same as sb1.5 */
+        else if (!strcasecmp(sbtype,"sb2.0")) { type=SBT_2; sb.subtype=SBST_200; }
+        else if (!strcasecmp(sbtype,"sb2.01")) { type=SBT_2; sb.subtype=SBST_201; }
+        else if (!strcasecmp(sbtype,"sb2")) { type=SBT_2; sb.subtype=SBST_201; } /* DOSBox SVN compat same as sb2.01 */
         else if (!strcasecmp(sbtype,"sbpro1")) type=SBT_PRO1;
         else if (!strcasecmp(sbtype,"sbpro2")) type=SBT_PRO2;
         else if (!strcasecmp(sbtype,"sb16vibra")) type=SBT_16;
@@ -3956,16 +3970,16 @@ public:
         }
 
         // Backward compatibility with existing configurations
-        if(section->Get_string("oplmode") == "cms") {
+        if(!strcmp(section->Get_string("oplmode"),"cms")) {
             LOG(LOG_SB, LOG_WARN)("The 'cms' setting for 'oplmode' is deprecated; use 'cms = on' instead.");
             sb.cms = true;
         }
         else {
-            const auto cms_str = section->Get_string("cms");
-            if(cms_str == "on") {
+            const char *cms_str = section->Get_string("cms");
+            if(!strcmp(cms_str,"on")) {
                 sb.cms = true;
             }
-            else if(cms_str == "auto") {
+            else if(!strcmp(cms_str,"auto")) {
                 sb.cms = (sb.type == SBT_1 || sb.type == SBT_GB);
             }
             else
@@ -3992,7 +4006,7 @@ public:
             sb.cms = false;
         }
 
-        if(sb.cms) {
+        if(sb.cms && !IS_PC98_ARCH) {
             CMS_Init(section);
         }
 
