@@ -121,6 +121,8 @@ static alt_rgb *rgbColors = (alt_rgb*)render.pal.rgb;
 static bool blinkstate = false;
 bool colorChanged = false, justChanged = false, staycolors = false, firstsize = true, ttfswitch = false, switch_output_from_ttf = false;
 bool init_once = false, init_twice = false;
+extern bool finish_prepare;
+bool is_ttfswitched_on=false;
 
 int menuwidth_atleast(int width), FileDirExistCP(const char *name), FileDirExistUTF8(std::string &localname, const char *name);
 void AdjustIMEFontSize(void),refreshExtChar(void), initcodepagefont(void), change_output(int output), drawmenu(Bitu val), KEYBOARD_Clear(void), RENDER_Reset(void), DOSBox_SetSysMenu(void), GetMaxWidthHeight(unsigned int *pmaxWidth, unsigned int *pmaxHeight), SetWindowTransparency(int trans), resetFontSize(void), RENDER_CallBack( GFX_CallBackFunctions_t function );
@@ -859,7 +861,7 @@ resize1:
     GFX_SelectFontByPoints(curSize);
 #if DOSBOXMENU_TYPE == DOSBOXMENU_HMENU
     if (!ttf.fullScrn && menu_gui && menu.toggle && menuwidth_atleast(ttf.cols*ttf.width+ttf.offX*2+GetSystemMetrics(SM_CXBORDER)*2)>0) {
-        if (ttf.cols*ttf.width > maxWidth || ttf.lins*ttf.height > maxHeight) E_Exit("Cannot accommodate a window for %dx%d", ttf.lins, ttf.cols);
+        if (ttf.cols*ttf.width > maxWidth || ttf.lins*ttf.height > maxHeight) E_Exit("Cannot accommodate a window for %dx%d", ttf.cols, ttf.lins);
         curSize++;
         goto resize1;
     }
@@ -878,7 +880,7 @@ resize2:
             GFX_SelectFontByPoints(curSize);
             goto resize2;
         }
-        E_Exit("Cannot accommodate a window for %dx%d", ttf.lins, ttf.cols);
+        E_Exit("Cannot accommodate a window for %dx%d", ttf.cols, ttf.lins);
     }
     if (ttf.SDL_font && ttf.width) {
         int widthb, widthm, widthx, width0, width1, width9;
@@ -1429,7 +1431,7 @@ void ttf_switch_on(bool ss=true) {
         bool OpenGL_using(void), gl = OpenGL_using();
 	(void)gl; // unused var warning
 #if defined(WIN32) && !defined(C_SDL2)
-        change_output(0); // call OUTPUT_SURFACE_Select() to initialize output before enabling TTF output on Windows builds
+        //change_output(0); // call OUTPUT_SURFACE_Select() to initialize output before enabling TTF output on Windows builds
 #endif
         change_output(10); // call OUTPUT_TTF_Select()
         SetVal("sdl", "output", "ttf");
@@ -1459,6 +1461,7 @@ void ttf_switch_on(bool ss=true) {
 #endif
         if (!IS_PC98_ARCH && vga.draw.address_add != ttf.cols * 2) checkcol = ss?2:1;
     }
+    is_ttfswitched_on = true;
 }
 
 void ttf_switch_off(bool ss=true) {
@@ -1511,5 +1514,6 @@ void ttf_switch_off(bool ss=true) {
 #endif
         if (Mouse_IsLocked()) GFX_CaptureMouse(true);
     }
+    is_ttfswitched_on = false;
 }
 #endif

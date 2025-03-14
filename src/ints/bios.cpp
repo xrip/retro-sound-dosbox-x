@@ -130,6 +130,8 @@ extern bool en_bios_ps2mouse;
 extern bool rom_bios_8x8_cga_font;
 extern bool pcibus_enable;
 extern bool enable_fpu;
+extern bool finish_prepare;
+extern bool is_ttfswitched_on;
 
 bool pc98_timestamp5c = true; // port 5ch and 5eh "time stamp/hardware wait"
 
@@ -152,9 +154,11 @@ void SetIMPosition(void);
 bool isDBCSCP();
 Bitu INT60_Handler(void);
 Bitu INT6F_Handler(void);
+bool toOutput(const char* what);
 #if defined(USE_TTF)
 void ttf_switch_on(bool ss), ttf_switch_off(bool ss), ttf_setlines(int cols, int lins);
 #endif
+std::string conf_output;
 
 /* Rate limit log entries regarding APM AH=05h CPU IDLE because Windows 98's APM driver likes to call it way too much per second */
 pic_tickindex_t APM_log_cpu_idle_next_report = 0;
@@ -3814,7 +3818,17 @@ static Bitu INT18_PC98_Handler(void) {
                 SegValue(es));
     }
 #endif
- 
+#if defined(USE_TTF)
+    if(!finish_prepare){
+        conf_output= static_cast<Section_prop*>(control->GetSection("sdl"))->Get_string("output");
+        if(conf_output == "ttf") { // BIOS screen does not like TTF mode, switch it on later
+            toOutput("ttf");
+            ttf_switch_off(true);
+            is_ttfswitched_on = true;
+            //LOG_MSG("TTF output is temporary switched off");
+        }
+    }
+#endif
     /* NTS: Based on information gleaned from Neko Project II source code including comments which
      *      I've run through GNU iconv to convert from SHIFT-JIS to UTF-8 here in case Google Translate
      *      got anything wrong. */
@@ -7754,6 +7768,14 @@ void MEM_ResetPageHandler_Unmapped(Bitu phys_page, Bitu pages);
 
 unsigned int dos_conventional_limit = 0;
 
+Bitu MEM_ConventionalPages(void) {
+    if (dos_conventional_limit == 0) return MEM_TotalPages();
+    unsigned int x = dos_conventional_limit / 4u;
+    if (x == 0) x = 1;
+    if (x > MEM_TotalPages()) x = MEM_TotalPages();
+    return x;
+}
+
 bool AdapterROM_Read(Bitu address,unsigned long *size) {
     unsigned char c[3];
     unsigned int i;
@@ -9819,7 +9841,7 @@ private:
         SegSet16(ss,0x0000);
 
         {
-            Bitu sz = MEM_TotalPages();
+            Bitu sz = MEM_ConventionalPages();
 
             /* The standard BIOS is said to put its stack (at least at OS boot time) 512 bytes past the end of the boot sector
              * meaning that the boot sector loads to 0000:7C00 and the stack is set grow downward from 0000:8000 */
@@ -10892,6 +10914,25 @@ startfunction:
             CALLBACK_RunRealInt(0x18);
 
             bios_pc98_posx = x;
+
+            reg_eax = 0x4200;   // setup 640x400 graphics
+            reg_ecx = 0xC000;
+            CALLBACK_RunRealInt(0x18);
+
+            IO_Write(0x6A, 0x01);    // enable 16-color analog mode (this makes the 4th bitplane appear)
+            IO_Write(0x6A, 0x04);    // but we don't need the EGC graphics
+            IO_Write(0xA4, 0x00);    // display page 0
+            IO_Write(0xA6, 0x00);    // write to page 0
+
+            // setup palette for TTF mode
+            for(unsigned int i = 0; i < 16; i++) {
+                unsigned int bias = (i & 8) ? 0x5 : 0x0;
+
+                IO_Write(0xA8, i);   // DAC index
+                IO_Write(0xAA, ((i & 2) ? 0xA : 0x0) + bias);    // green
+                IO_Write(0xAC, ((i & 4) ? 0xA : 0x0) + bias);    // red
+                IO_Write(0xAE, ((i & 1) ? 0xA : 0x0) + bias);    // blue
+            }
         }
         else {
             reg_eax = 3;        // 80x25 text
@@ -11657,7 +11698,7 @@ startfunction:
         // TODO: If instructed to boot a guest OS...
 
         /* wipe out the stack so it's not there to interfere with the system, point it at top of memory or top of segment */
-        reg_esp = std::min((unsigned int)((MEM_TotalPages() << 12) - 0x600 - 4),0xFFFCu);
+        reg_esp = std::min((unsigned int)((MEM_ConventionalPages() << 12) - 0x600 - 4),0xFFFCu);
         reg_eip = 0;
         CPU_SetSegGeneral(cs, 0x60);
         CPU_SetSegGeneral(ss, 0x60);

@@ -1200,8 +1200,6 @@ Création du fichier image "%s" avec %u cylindres, %u têtes et %u secteurs
 
 .
 :PROGRAM_IMGMAKE_CANT_READ_FLOPPY
-
-
 Impossible de lire la disquette.
 .
 :PROGRAM_IMGMAKE_BADSIZE
@@ -1239,7 +1237,6 @@ Disposition de clavier %s chargée pour la page de code %i
 :PROGRAM_KEYB_FILENOTFOUND
 Fichier clavier %s non trouvé (ou pas un ID valide)
 
-
 .
 :PROGRAM_KEYB_INVALIDFILE
 Fichier clavier %s invalide
@@ -1252,37 +1249,37 @@ Aucune mise en page dans %s pour la page de code %i
 :PROGRAM_KEYB_INVCPFILE
 Fichier de page de code inexistant ou invalide pour la disposition %s
 
-
 .
 :INT21_6523_YESNO_CHARS
-yn
+on
 .
 :PROGRAM_LABEL_HELP
-Creates, changes, or deletes the volume label of a drive.
+Créé, change ou efface l'étiquette de volume d'un lecteur
 
 LABEL [drive:][label]
 
-  [drive:]○Specifies the drive letter
-  [label]○Specifies the volume label
+  [drive:]○Spécifie la lettre du lecteur
+  [label]○Spécifie l'étiquette du volume
 
 .
 :PROGRAM_LABEL_DELETE
-Delete the volume label (Y/N)? 
+Efface l'étiquette du volume (O/N) ?
+
 .
 :PROGRAM_LABEL_TOOLONG
-Label is too long (more than 11 characters).
+L'étiquette est trop longue (plus de 11 caractères)
 
 .
 :PROGRAM_LABEL_BADCHARS
-Label has invalid characters.
+L'étiquette a des caractères invalides
 
 .
 :PROGRAM_LABEL_VOLUMEIS
-Volume in drive %c is %s
+Le volume dans le lecteur %c est %s
 
 .
 :PROGRAM_LABEL_NOLABEL
-Volume in drive %c has no label
+Le volume dans le lecteur %c n'a pas d'étiquette
 
 .
 :PROGRAM_MODE_USAGE
@@ -1302,105 +1299,106 @@ Doit spécifier un numéro de port entre 1 et 9.
 
 .
 :PROGRAM_VHDMAKE_WRITERR
-Could not write to new VHD image "%s", aborting.
+Impossible d'écrire dans la nouvelle image VHD "%s", abandon.
 
 .
 :PROGRAM_VHDMAKE_REMOVEERR
-Could not erase file "%s"
+Impossible d'effacer le fichier "%s"
 
 .
 :PROGRAM_VHDMAKE_RENAME
-You'll have to manually rename the newly created VHD image.
+Vous devrez renommmer manuellement l'image VHD nouvellement créée
 
 .
 :PROGRAM_VHDMAKE_SUCCESS
-New VHD image successfully created. You can mount it with ←[34;1mIMGMOUNT←[0m.
+Nouvelle image VHD créée avec succès. You pouvez la monter avec ←[34;1mIMGMOUNT←[0m.
 
 .
 :PROGRAM_VHDMAKE_ERROPEN
-Error, could not open image file "%s".
+Erreur, impossible d'ouvrir le fichier image "%s".
 
 .
 :PROGRAM_VHDMAKE_BADSIZE
-Bad VHD size specified, aborting!
+Mauvaise taille VHD spécifiée, abandon !
 
 .
 :PROGRAM_VHDMAKE_FNEEDED
-A pre-existing VHD image can't be silently overwritten without -f option!
+Une image VHD pré-existante ne peut pas être silencieusemnt écrasée sans l'option -f !
 
 .
 :PROGRAM_VHDMAKE_BADPARENT
-The parent VHD image "%s" can't be opened for linking, aborting!
+L'image VHD parente "%s" ne peut pas être ouverte pour liaison, abandon !
 
 .
 :PROGRAM_VHDMAKE_NOINFO
-Couldn't query info for "%s".
+Impossible d'obtenir des informations pour "%s".
 
 .
 :PROGRAM_VHDMAKE_BLOCKSTATS
-with %d/%d blocks allocated.
+avec %d/%d blocs alloués.
 
 .
 :PROGRAM_VHDMAKE_INFO
-VHD "%s" type is %s.
-Its virtual size is %.02f MB
+Le type du VHD "%s" est %s.
+Sa taille virtuelle est %.02f Mo
 
 .
 :PROGRAM_VHDMAKE_CANTMERGE
-%s is not a Differencing disk, can't merge!
+% n'est pas un disque de différenciation, impossible de fusionner !
 
 .
 :PROGRAM_VHDMAKE_MERGEREPORT
-%d sectors in %d blocks from "%s" merged into "%s".
+%d secteurs dans %d blocs de "%s" fusionné dans "%s".
 
 .
 :PROGRAM_VHDMAKE_MERGENODELETE
-Couldn't remove snapshot "%s", you'll have to do it yourself!
+Impossible d'enlever l'instantané "%s", vous devez le faire vous-même !
 
 .
 :PROGRAM_VHDMAKE_MERGEOKDELETE
-Snapshot VHD merged and deleted.
+Instantané VHD fusionné et effacé.
 
 .
 :PROGRAM_VHDMAKE_MERGEFAILED
-Failure while merging, aborted!
+Echec lors de la fusion, abandon !
+
 .
 :PROGRAM_VHDMAKE_MERGEWARNCORRUPTION
-Parent "%s" contents could be corrupted!
+Les contenus du parent "%s" peuvent être corrompus !
 
 .
 :PROGRAM_VHDMAKE_ABSPATH_WIN
-Warning: an absolute path to parent limits portability to Windows.
-Please prefer a path relative to differencing image file!
+Attention : un chemin d'accès absolu au parent limite la portabilité de Windows.
+Veuillez préférer un chemin d'accès relatif à l'image de différenciation !
 
 .
 :PROGRAM_VHDMAKE_ABSPATH_UX
-ERROR: an absolute path to parent inhibits portability.
-Use a path relative to differencing image file!
+ERREUR: un chemin d'accès absolu au parent empêche la portabilité.
+Utilisez un chemin d'accès relatif à l'image de différenciation !
 
 .
 :PROGRAM_VHDMAKE_HELP
-Creates Dynamic or Differencing VHD images, or converts raw images
-into Fixed VHD.
+Crée des images VHD dynamiques ou différentielles, ou convertit 
+des images brutes en VHD fixes.
 ←[32;1mVHDMAKE←[0m [-f] new.vhd size[BKMGT]
 ←[32;1mVHDMAKE←[0m ←[34;1m-convert←[0m raw.hdd new.vhd
 ←[32;1mVHDMAKE←[0m [-f] ←[34;1m-link←[0m parent.vhd new.vhd
 ←[32;1mVHDMAKE←[0m ←[34;1m-merge←[0m delta.vhd
 ←[32;1mVHDMAKE←[0m ←[34;1m-info←[0m a.vhd
- -c | -convert  convert a raw hd image to Fixed VHD, renaming it to new.vhd
- -l | -link     create a new Differencing VHD new.vhd and link it to the
-                pre-existing parent image parent.vhd
- -f | -force    force overwriting a pre-existing image file
- -i | -info     show useful information about a.vhd image
- -m | -merge    merge differencing delta.vhd to its parent
- new.vhd        name of the new Dynamic VHD image to create
- size           disk size (eventually with size unit, Bytes is implicit)
-When converting a raw disk image to Fixed VHD, it has to be partitioned with
-MBR scheme and formatted with FAT format.
-When creating a Dynamic VHD, its size must range from 3 MB to 2040 GB.
-The Dynamic VHD created is not partitioned nor formatted: to directly mount to
-a drive letter with ←[34;1mIMGMOUNT←[0m, please consider using ←[34;1mIMGMAKE←[0m instead.
-A merged snapshot VHD is automatically deleted if merge is successful.
+ -c | -convert  convertit une image hd brute en VHD fixe, en la renommant new.vhd
+ -l | -link     créer un nouveau VHD de différenciation new.vhd et le relie
+                à l'image parent préexistante parent.vhd
+ -f | -force    force l'écrasement d'un fichier image préexistant
+ -i | -info     affiche des informations utiles sur une image .vhd
+ -m | -merge    fusionne le fichier delta.vhd avec son parent
+ new.vhd        nom de la nouvelle image dynamique VHD à créer
+ size           taille du disque (éventuellement avec l'unité de taille, octet est implicite)
+Lors de la conversion d'une image de disque brute en VHD fixe, elle doit être partitionnée 
+selon le schéma MBR et formatée au format FAT.
+Lors de la création d'un VHD dynamique, sa taille doit être comprise entre 3 Mo et 2040 Go.
+Le VHD dynamique créé n'est ni partitionné ni formaté : pour monter directement
+une lettre de lecteur avec ←[34;1mIMGMOUNT←[0m, utilisez de ←[34;1mIMGMAKE←[0m à la place.
+Un snapshot VHD fusionné est automatiquement supprimé si la fusion est réussie.
 .
 :SHELL_CMD_TREE_ERROR
 Aucun sous-répertoire n'existe
@@ -1573,11 +1571,11 @@ Impossible de supprimer - %s
 
 .
 :SHELL_CMD_DEL_CONFIRM
-Delete %s (Y/N)?
+Effacer %s (O/N)?
 .
 :SHELL_CMD_DEL_SURE
 Tous les fichiers du répertoire seront supprimés !
-Êtes-vous sûr [Y/N] ?
+Êtes-vous sûr [O/N] ?
 .
 :SHELL_SYNTAXERROR
 Erreur de syntaxe
@@ -3687,4 +3685,548 @@ CPU: noyau simple
 .
 :MAPPER:togmenu
 Basculer barre de menu
+.
+:PROGRAM_FLAGSAVE_UNFLAGALL
+Tous les fichiers non signalés pour sauvegarde.
+
+.
+:PROGRAM_FLAGSAVE_UNFLAGGED
+Fichier % non signalé pour sauvegarde.
+
+.
+:PROGRAM_FLAGSAVE_FLAGGED
+Fichier déjà signalé pour sauvegarde - %s
+
+.
+:PROGRAM_FLAGSAVE_TOOMANY
+Trop de fichiers signalés pour la sauvegarde.
+
+.
+:PROGRAM_FLAGSAVE_SAVED
+Ficher %s signalé pour la sauvegarde
+
+.
+:PROGRAM_FLAGSAVE_LIST
+Fichiers signalés pour la sauvegarde :
+.
+:PROGRAM_FLAGSAVE_HLP
+Marque ou signale les fichiers pour la fonctionnalité de sauvegarde de l'état.
+
+FLAGSAVE [file(s) [/F] [/R]] [/U]
+
+  file(s)     Spécifie un ou plusieurs fichiers à signaler pour la sauvegarde.
+  /F          Force à signaler le(s) fichier(s) même si introuvable.
+  /R          Enlève le signalement des fichiers spécifiés.
+  /U          Enlève le signalement de tous les fichiers signalés.
+
+Taper FLAGSAVE sans un paramètre pour lister les fichiers signalés.
+
+.
+:PROGRAM_INT2FDBG_NOT_SET
+Le crochet INT 2Fh n'est pas activé.
+
+.
+:PROGRAM_INT2FDBG_ALREADY
+Le crochet INT 2Fh est déjà activé.
+
+.
+:PROGRAM_INT2FDBG_HELP
+Active INT 2Fh pour des besoins de débogage.
+
+INT2FDBG [option]
+  /I      Installe le crochet
+  
+Il accrochera INT 2Fh au sommet de la chaîne d'appels pour les informations de débogage.
+
+Taper INT2FDBG sans un paramètres pour montrer le status du crochet.
+.
+:PROGRAM_SET80x25
+Change en mode texte 80x25.
+.
+:PROGRAM_SET80x43
+Change en mode texte 80x43.
+.
+:PROGRAM_SET80x50
+Change en mode texte 80x50.
+.
+:PROGRAM_SET80x60
+Change en mode texte 80x60.
+.
+:PROGRAM_SET132x25
+Change en mode texte 132x25.
+.
+:PROGRAM_SET132x43
+Change en mode texte 132x43.
+.
+:PROGRAM_SET132x50
+Change en mode texte 132x50.
+.
+:PROGRAM_SET132x60
+Change en mode texte 132x60.
+.
+:PROGRAM_RESCAN_HELP
+Ré-analyse pour les changements effectués sur les disques montés sur l'hôte en vidant les caches.
+
+RESCAN [/A] [/Q]
+RESCAN [drive:] [/Q]
+
+  [/A]     Ré-analyse tous les disques
+  [/Q]     Active le mode silencieux
+  [drive:] Le lecteur à ré-analyser
+
+Taper RESCAN sans paramètres pour ré-analyser le lecteur courant.
+
+.
+:PROGRAM_CFGTOOL_HELP
+Démarre l'outil de configuration graphique de DOSBox-X.
+
+CFGTOOL
+
+Note: Vous pouvez aussi utiliser la commande CONFIG pour une configuration en ligne de commande.
+.
+:PROGRAM_IMGSWAP_HELP
+Échange image de disquette, disque dur et de disque optiques.
+
+←[32;1mIMGSWAP←[0m ←[37;1mdrive←[0m ←[36;1m[position]←[0m
+ ←[37;1mdrive←[0m               Lettre du lecteur pour l'échange d'image.
+ ←[36;1m[position]←[0m          Position du disque à échanger.
+.
+:PROGRAM_INTRO_HELP
+Une introduction plein écran à DOSBOX-X.
+
+INTRO [/RUN] [CDROM|MOUNT|USAGE|WELCOME]
+.
+:PROGRAM_IMGMOUNT_NOT_ASSIGNED
+L'index du disque BIOS n'a pas d'image assignée.
+.
+:PROGRAM_IMGMOUNT_INVALID_NUMBER
+Numéro de montage invalide.
+.
+:PROGRAM_IMGMOUNT_INVALID_FSTYPE
+Type de fichier invalide.
+.
+:PROGRAM_IMGMOUNT_INVALID_SIZE
+Paramètre taille invalide
+.
+:PROGRAM_IMGMOUNT_NOT_MOUNTED_NUMBER
+Le numéro de lecteur %d n'est pas monté.
+.
+:PROGRAM_IMGMOUNT_UMOUNT_USAGE
+Utilisation incorrect de démontage IMGMOUNT.
+.
+:PROGRAM_IMGMOUNT_INVALID_LETTER
+Lettre lecteur invalide.
+.
+:PROGRAM_IMGMOUNT_CHOOSE_LETTER
+Les partitions ne peuvent pas être montées en conflit avec l'allocation standard 
+du disque dur INT 13h. Choisissez une autre lettre de lecteur pour le montage.
+.
+:PROGRAM_ELTORITO_LETTER
+L'émulation El Torito requière une lettre de lecteur CD-ROM propre.
+.
+:PROGRAM_ELTORITO_DRIVE_EXISTS
+Le lecteur CD-ROM El Torito spécifié existe déjà comme un périphérique non-CD-ROM
+.
+:PROGRAM_ELTORITO_NOT_CDDRIVE
+Le lecteur CD-ROM El Torito spécifié n'est pas un lecteur CD-Rom.
+.
+:PROGRAM_ELTORITO_REQUIRE_FLOPPY
+L'émulation El Torito doit être utlisé avec -t floppy cette fois.
+.
+:PROGRAM_ELTORITO_NO_BOOT_RECORD
+L'enregistrement de démarrage CD-ROM El Torito introuvable.
+.
+:PROGRAM_ELTORITO_ENTRY_UNREADABLE
+Entrées El Torito illisibles.
+.
+:PROGRAM_ELTORITO_NO_BOOTABLE_FLOPPY
+Disquette de démarrage El Torito introuvable.
+.
+:PROGRAM_ELTORITO_BOOTABLE_SECTION
+Impossible de localiser la section de démarrage.
+.
+:PROGRAM_ELTORITO_BOOTSECTOR
+Secteur de démarrage El Torito illisible
+.
+:PROGRAM_IMGMAKE_ALIGNMENT
+Alignement invalide
+.
+:PROGRAM_IMGMAKE_PARTOFS
+-partofs invalide
+.
+:PROGRAM_IMGMAKE_FAT
+Option -fat invalide. Doit être 12, 16 ou 32
+.
+:PROGRAM_IMGMAKE_FATCOPIES
+Option -fatcopies invalide
+.
+:PROGRAM_IMGMAKE_SPC
+Option -spc invalide, hors plage
+.
+:PROGRAM_IMGMAKE_SPC2
+Option -spc invalide, doit être un multiple de 2
+.
+:PROGRAM_IMGMAKE_ROOTDIR
+Option -rootdir invalide
+.
+PROGRAM_IMGMAKE_BOOTSECT
+Position du secteur de démarrage invalide
+.
+PROGRAM_IMGMAKE_VOLUME_ALIGN
+Le contrôle de sécurité a échoué : La taille du volume n'est pas alignée
+.
+:PROGRAM_IMGMAKE_FAT_ALIGN
+Le contrôle de sécurité a échoué : les tables FAT ne sont pas alignées
+.
+:PROGRAM_IMGMAKE_SECTPERFAT
+Erreur : Le système de fichiers généré a plus de 256 secteurs par FAT et n'est pas FAT32
+.
+:PROGRAM_IMGMAKE_VOLSIZE
+Le contrôle de sécurité a échoué : Taille du volume non alignée
+.
+:PROGRAM_IMGMAKE_CLUSTERS
+Erreur : Le système de fichiers généré a trop peu de clusters compte tenu des paramètres
+.
+:PROGRAM_IMGMAKE_CLUSTERCOUNT
+Attention : Le compte de cluster est trop haut compte tenu de la taille 
+            du volume. Rapporter un nombre de secteurs plus faible.
+.
+:PROGRAM_IMGMAKE_CLUSTER_ALIGN
+Le contrôle de sécurité a échoué : Le premier cluster n'est pas aligné
+.
+:PROGRAM_IMGMAKE_CLUSTER_SIZE
+ATTENTION : Les tailles de clusters >= 64KB ne sont pas compatibles avec MS-DOS et SCANDISK
+.
+:PROGRAM_BOOT_UNSUPPORTED
+Mode de démarrage non supporté
+.
+:PROGRAM_MOUNT_OVERLAY_REPLACE
+L'overlay existant a été remplacé par un nouvel overlay.
+.
+:PROGRAM_LOADFIX_EMS_FREE
+Poignée EMS %u : impossible de libérer
+.
+:PROGRAM_LOADFIX_XMS_FREE
+Poignée XMS %u : impossible de libérer
+.
+:PROGRAM_LOADFIX_EMS_ALLOC
+Bloc EMS alloué (%uKB)
+.
+:PROGRAM_LOADFIX_EMS_ALLOCERROR
+Impossible d'allouer des blocs EMS
+.
+PROGRAM_LOADFIX_NOEMS
+EMS inactif
+.
+:PROGRAM_LOADFIX_XMS_ALLOC
+Bloc XMS alloué (%uKB)
+.
+:PROGRAM_LOADFIX_XMS_ALLOCERROR
+Impossible d'allouer des blocs XMS
+.
+:PROGRAM_LOADFIX_NOXMS
+XMS inactif
+.
+:PROGRAM_LOADFIX_NOALLOC
+Le MCB le plus bas est au déla de 64 Ko, rien n'est alloué
+.
+:PROGRAM_BOOT_SWAP_ALREADY
+Plusieurs images de disque sont spécifiées et un autre lecteur est déjà connecté à la liste d'échange.
+.
+:PROGRAM_BOOT_NOT_SPECIFIED
+Aucune image spécifiée
+.
+:PROGRAM_BOOT_IS_PC88
+L'image D88 cible apparemment le PC-88 et ne peut pas être démarrée.
+.
+:PROGRAM_BOOT_BPS_TOOLARGE
+Octets/secteur trop grand
+.
+:PROGRAM_BOOT_DRIVE_READERROR
+Erreur de lecture du lecteur
+.
+:PROGRAM_START_HELP_WIN
+Démarre une fenêtre séparée pour lancer une commande ou un programme spécifié.
+
+START [+|-|_] command [arguments]
+
+  [+|-|_] : Pour maximiser/minimiser/cacher le programme
+  Les options /MAX, /MIN, /HID sont aussi acceptées.
+  command : La commande, programme ou fichier à démarrer.
+  arguments : Arguments à passer à l'application.
+  
+START ouvre le prompt de la fenêtre de commande Windows pour lancer
+ces commandes et attend une pression de touche avant de quitter
+(spécifié par l'option "startincon") : %s
+
+Note : Le chemin d'accès spécifié dans cette commande est le
+chemin d'accès dans le système hôte.
+.
+:PROGRAM_START_HELP
+Démarre une fenêtre séparée pour lancer une commande ou un programme spécifié.
+
+START /OPEN file
+START command [arguments]
+
+  /OPEN : Pour ouvrir le fichier ou l'URL avec le programme associé.
+  file : Le fichier ou l'URL à ouvrir avec le programme associé.
+  command : La commande, programme ou fichier à lancer ou à démarrer.
+  arguments : Arguments à passer à l'application.
+  
+Note : Le chemin d'accès spécifié dans cette commande est le
+chemin d'accès dans le système hôte.
+.
+:PROGRAM_START_COMPLETED
+L'exécution de la commande est complétée.
+.
+:PROGRAM_START_COMMAND
+Démarre %s...
+.
+:PROGRAM_START_CTRLC
+(Pressez Ctrl+C pour quitter immédiatement)
+.
+:PROGRAM_START_HOST_ERROR
+Erreur : START ne peut pas lancer l'application à démarrer sur votre système hôte. 
+.
+:PROGRAM_START_LAUNCH_ERROR
+Erreur : START ne peut pas lancer l'application.
+.
+:PROGRAM_IMGMOUNT_ELTORITO_NO_FILE
+Ne pas spécifier les fichiers quand on monte des lecteurs disquettes depuis
+des CDs démarrable El Torito
+.
+:PROGRAM_IMGMOUNT_RAMDRIVE_NO_FILE
+Ne pas spécifier les fichiers quand on monte des lecteurs RAM
+.
+:PROGRAM_IMGMOUNT_INVALID_SECTORSIZE
+La taille du secteur doit être plus grande que 512 octet et
+divise uniformément la taille du cluster d'images de %lu octets.
+.
+:PROGRAM_IMGMOUNT_OPEN_ERROR
+Impossible d'ouvrir '%s'
+.
+:PROGRAM_IMGMOUNT_QCOW2_INVALID
+L'image qcow2 '%s' n'est pas supportée
+.
+:PROGRAM_IMGMOUNT_GEOMETRY_ERROR
+Impossible de détecter la géométrie
+.
+:PROGRAM_IMGMOUNT_DOS_VERSION
+Monter cette image fichier requiert une version rapporté de DOS de %u.%u ou suivant.
+%s
+.
+:PROGRAM_IMGMOUNT_INVALID_FLOPPYSIZE
+Taille disquette non reconnue
+.
+:PROGRAM_IMGMOUNT_MULTIPLE_USED
+De multiples images données et un autre lecteur utilise déjà de multiples images
+.
+:PROGRAM_IMGMOUNT_MULTIPLE_NOTSUPPORTED
+Les images disques multiples ne sont pas supporté par ce lecteur
+.
+:PROGRAM_IMGMOUNT_HD_FDPOSITION
+Impossible de monter un disque dur dans un emplacement disquette
+.
+:PROGRAM_IMGMOUNT_FD_HDPOSITION
+Impossible de monter une disquette dans un emplacement disque dur
+.
+:PROGRAM_ELTORITO_ISOMOUNT
+CD démarrable El Torito : montage -fs iso n'est pas supporté
+.
+:PROGRAM_MODE_STATUS
+Status pour le dispositif CON:
+------------------------------
+Colonnes=%d
+Lignes=%d
+.
+:PROGRAM_MODE_NOTSUPPORTED
+
+L'opération de page de code n'est pas prise en charge par cet appareil
+.
+:PROGRAM_MODE_RATE_DELAY
+Le débit et le délai doivent être spécifiés ensemble
+.
+:PROGRAM_UTF8_HELP
+Convertit du texte UTF-8 pour voir le code de la page actuelle.
+
+UTF8 < [drive:][path]filename
+command-name | UTF8
+.
+:PROGRAM_UTF8_NO_TEXT
+Aucun texte en entré trouvé.
+.
+:PROGRAM_UTF8_INVALIDCP
+Code page invalide pour la conversion du texte.
+.
+:PROGRAM_UTF8_NOT_UTF8
+Le texte en entrée est en UTF-16.
+.
+:PROGRAM_UTF8_CONVERSION_ERROR
+Une erreur est arrivée durant la conversion du texte.
+.
+:PROGRAM_UTF16_HELP
+Convertit un texte UTF-16 pour voir le code de la page actuelle.
+
+UTF16 [/BE|/LE] < [drive:][path]filename
+command-name | UTF16 [/BE|/LE]
+
+  /BE  Use UTF-16 Big Endian
+  /LE  Use UTF-16 Little Endian
+.
+:PROGRAM_VTEXT_HELP
+Change le mode V-text pour l'émulation DDS/V.
+
+VTEXT [mode]
+
+  [mode] peut-être 0, 1, 2, pour aucun V-text, V-text 1, and V-text 2 respectivement.
+
+Tapez VTEXT sans paramètres pour montrer le statut du mode V-texte courant..
+.
+:PROGRAM_NMITEST_HELP
+Génère une interruption non masquable (NMI).
+
+NMITEST
+
+Note : C'est un outil de débogage pour tester que le gestionnaire d'interruptions
+fonctionne correctement.
+.
+:PROGRAM_NMITEST_GENERATE_NMI
+Génère une interruption non masquable (NMI)...
+.
+:PROGRAM_CAPMOUSE_HELP
+Capture ou libèe la souris dans DOSBox-X.
+
+CAPMOUSE [/C|/R]
+
+  /C Capture la souris
+  /R Libère la souris
+.
+:PROGRAM_CAPMOUSE_MOUSE
+La souris 
+.
+:PROGRAM_CAPMOUSE_CURRENTLY
+est actuelleemnt 
+.
+:PROGRAM_CAPMOUSE_CAPTURED
+capturée
+.
+:PROGRAM_CAPMOUSE_RELEASED
+libérée
+.
+:PROGRAM_AUTOTYPE_HELP
+Lance une entrée scriptée au clavier dans un programme DOS lancé.
+
+AUTOTYPE [-list] [-w WAIT] [-p PACE] button_1 [button_2 [...]]
+
+Where:
+  -list :   affiche tous les noms de boutons disponibles.
+  -w WAIT : seconds avant que la saisie commence. Deux secondes par défaut; maximum 30.
+  -p PACE : secondes entre chaque frappe. Une demi-seconde par défaut; maximum 10.
+
+  La séquence est composée d'un ou de plusieurs boutons séparés par des espaces.
+  La saisie automatique commence après WAIT secondes, et chaque bouton est entré
+  toutes les PACE secondes. Le caractère , insère un délai PACE supplémentaire.
+    
+Quelques exemples :
+  ←[32;1mAUTOTYPE -w 1 -p 0.3 haut entrée , entrée de droite←[0m
+  ←[32;1mAUTOTYPE -p 0.2 f1 kp_8 , , entrée←[0m
+  ←[32;1mAUTOTYPE -w 1.3 esc entrée , p l a y e r entrée←[0m
+.
+:PROGRAM_AUTOTYPE_NO_BINDINGS
+AUTOTYPE : Le mappeur n'a pas de touche reliée
+.
+:PROGRAM_AUTOTYPE_CLAMP_VALUE
+AUTOTYPE : Délimitation de la valeur %s de %.2f à %.2f
+.
+:PROGRAM_AUTOTYPE_INVALID_VALUE
+AUTOTYPE : la valeur %s '%s' n'est pas un nombre à virgule flottante valide
+.
+:PROGRAM_ADDKEY_HELP
+Génère des pressions de touches artificielles.
+
+ADDKEY [pmsec] [key]
+
+Par exemple, la commande ci-dessous tape "dir" suivi par Entrée après 1 seconde :
+
+ADDKEY p1000 d i r enter
+
+Vous pouvez aussi essayer la commande AUTOTYPE  au lieu d'effectuer
+une entrée clavier scriptée dans un programme DOS en cours d'exécution.
+.
+:PROGRAM_SETCOLOR_HELP
+Affiche ou change les réglages de la palette couleur du mode texte.
+
+SETCOLOR [color# [value]]
+
+Par exemple :
+
+   ←[32;1mSETCOLOR 0 (50,50,50)←[0m
+Change la couleur 0 pour spécifier la valeur de la couleur
+
+   ←[32;1mSETCOLOR 7 -←[0m
+Retourne la couleur 7 comme valeur de couleur par défaut
+
+   ←[32;1mSETCOLOR 3 +←[0m
+Retourne la couleur 3 à la valeur de couleur prédéfinie
+
+   ←[32;1mSETCOLOR MONO←[0m
+Affiche le statut du mode MONO actuel
+
+Pour changer les couleurs d'arrière et d'avant plan, utilisez la commande COLOR.
+.
+:PROGRAM_SETCOLOR_STATUS
+Statut mode MONO : %s (mode vidéo %d)
+
+.
+:PROGRAM_SETCOLOR_ACTIVE
+active
+.
+:PROGRAM_SETCOLOR_INACTIVE
+inactive
+.
+:PROGRAM_SETCOLOR_UNAVAILABLE
+indisponible
+.
+:PROGRAM_SETCOLOR_MONO_MODE7
+Statut mode MONO => actif (mode vidéo 7)
+.
+:PROGRAM_SETCOLOR_MONO_MODE3
+Statut mode MONO => inactif (mode vidéo 3)
+.
+:PROGRAM_SETCOLOR_MONO_FAIL
+N'a pas changé le mode MONO
+.
+:PROGRAM_SETCOLOR_MONO_SYNTAX
+Doit être + ou - pour MONO : %s
+.
+:PROGRAM_SETCOLOR_COLOR
+Couleur %d : (%d,%d,%d) ou #%02x%02x%02x
+
+.
+:PROGRAM_SETCOLOR_INVALID_NUMBER
+Numéro de couleur invalide - %s
+.
+:PROGRAM_SETCOLOR_INVALID_VALUE
+Valeur de couleur invalide - %s
+.
+:PROGRAM_SETCOLOR_NOT_SUPPORTED
+Changer la palette de couleur n'est pas supporté par le mode vidéo actuel.
+.
+:PROGRAM_BOOT_UNKNOWN_BOOTHAX
+Mode boothax inconnu
+.
+:PROGRAM_BOOT_SPECIFY_FILE
+Vous devez spécifier l'image BIOS à démarrer
+.
+:PROGRAM_BOOT_BIOS_OPEN_ERROR
+Impossible d'ouvrir l'image BIOS
+.
+:PROGRAM_BIOSTEST_SPECIFY_FILE
+Vous devez spécifier l'image BIOS à charger.
+.
+:PROGRAM_BIOSTEST_OPEN_ERROR
+Impossible d'ouvrir un fichier
+.
+:PROGRAM_BIOSTEST_TOO_LARGE
+Le ficher BIOS est trop gros
 .

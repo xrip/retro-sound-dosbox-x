@@ -60,6 +60,7 @@ extern const char* RunningProgram;
 extern int enablelfn, msgcodepage, lastmsgcp;
 extern uint16_t countryNo;
 extern unsigned int dosbox_shell_env_size;
+extern bool is_ttfswitched_on;
 bool outcon = true, usecon = true, pipetmpdev = true;
 bool shellrun = false, prepared = false, testerr = false;
 
@@ -84,6 +85,13 @@ void CALLBACK_DeAllocate(Bitu in), DOSBox_ConsolePauseWait();
 void GFX_SetTitle(int32_t cycles, int frameskip, Bits timing, bool paused);
 bool isDBCSCP(), InitCodePage(), isKanji1(uint8_t chr), shiftjis_lead_byte(int c), sdl_wait_on_error(), CheckDBCSCP(int32_t codepage), TTF_using(void);
 void makestdcp950table(), makeseacp951table();
+
+#if defined(USE_TTF)
+void ttf_switch_on(bool ss = true), ttf_switch_off(bool ss = true);
+void ttf_setlines(int cols, int lins);
+void ttf_reset();
+#endif
+extern VideoModeBlock* CurMode;
 
 Bitu call_shellstop = 0;
 /* Larger scope so shell_del autoexec can use it to
@@ -822,6 +830,14 @@ void showWelcome(Program *shell) {
 bool finish_prepare = false;
 void DOS_Shell::Prepare(void) {
     if (this == first_shell) {
+#if defined(USE_TTF)
+        if(CurMode->type == M_TEXT || (IS_PC98_ARCH && is_ttfswitched_on)) ttf_switch_on(true); // Initialization completed, M_TEXT modes can switch to TTF mode from now on.
+        if(ttf.inUse) {
+            int cols = static_cast<Section_prop*>(control->GetSection("ttf"))->Get_int("cols");
+            int lins = static_cast<Section_prop*>(control->GetSection("ttf"))->Get_int("lins");
+            if(cols || lins) ttf_setlines(cols, lins);
+        }
+#endif
         const char* layoutname = DOS_GetLoadedLayout();
         if(layoutname == NULL) {
             int32_t cp = dos.loaded_codepage;
@@ -829,11 +845,8 @@ void DOS_Shell::Prepare(void) {
             toSetCodePage(NULL, cp, -1);
         }
         Section_prop *section = static_cast<Section_prop *>(control->GetSection("dosbox"));
-        if (section->Get_bool("startbanner")&&!control->opt_fastlaunch)
-            showWelcome(this);
-        else if ((CurMode->type==M_TEXT || IS_PC98_ARCH) && ANSI_SYS_installed())
-            WriteOut("\033[2J");
-		if (!countryNo) {
+        bool startbanner = section->Get_bool("startbanner");
+        if (!countryNo) {
 #if defined(WIN32)
 			char buffer[128];
 #endif
@@ -862,7 +875,7 @@ void DOS_Shell::Prepare(void) {
 		bool zdirpath = section->Get_bool("drive z expand path");
 		std::string layout = section->Get_string("keyboardlayout");
 		strcpy(config_data, "");
-		section = static_cast<Section_prop *>(control->GetSection("config"));
+        section = static_cast<Section_prop *>(control->GetSection("config"));
 		if ((section!=NULL&&!control->opt_noconfig)||control->opt_langcp) {
 			char *countrystr = (char *)section->Get_string("country"), *r=strchr(countrystr, ',');
 			int country = 0;
@@ -885,7 +898,12 @@ void DOS_Shell::Prepare(void) {
 			}
             if(!chinasea)makestdcp950table();
             if(chinasea) makeseacp951table();
-            runRescan("-A -Q");
+            InitCodePage();
+            if(startbanner && !control->opt_fastlaunch)
+                //showWelcome(this);
+                DoCommand((char *)std::string("z:\\system\\intro welcome").c_str());
+            else if((CurMode->type == M_TEXT || IS_PC98_ARCH) && ANSI_SYS_installed())
+                WriteOut("\033[2J");
             const char * extra = section->data.c_str();
 			if (extra&&!control->opt_securemode&&!control->SecureMode()&&!control->opt_noconfig) {
 				std::string vstr;
@@ -949,6 +967,8 @@ void DOS_Shell::Prepare(void) {
 			strcat(config_data, section->Get_string("rem"));
 			strcat(config_data, "\r\n");
 		}
+        if(dos.loaded_codepage == 932) toSetCodePage(this, 932, -1); // Workaround for corrupted box-drawing characters
+        runRescan("-A -Q");
         internal_program = true;
 		VFILE_Register("AUTOEXEC.BAT",(uint8_t *)autoexec_data,(uint32_t)strlen(autoexec_data));
 		VFILE_Register("CONFIG.SYS",(uint8_t *)config_data,(uint32_t)strlen(config_data));
@@ -983,7 +1003,6 @@ void DOS_Shell::Prepare(void) {
         //initcodepagefont();
         //dos.loaded_codepage=cp;
         finish_prepare = true;
-
     }
 #if (defined(WIN32) && !defined(HX_DOS) || defined(LINUX) && C_X11 || defined(MACOSX)) && (defined(C_SDL2) || defined(SDL_DOSBOX_X_SPECIAL))
     if (enableime) SetIMPosition();
@@ -1264,13 +1283,15 @@ public:
 #else
 		if (secure) autoexec[i++].Install("z:\\system\\config.com -securemode");
 #endif
-#if defined(WIN32)
-        if(TTF_using()) {
+#if 0
+//#if defined(WIN32) && defined(USE_TTF) /* Workaround for TTF screen initialization */
+        if(static_cast<Section_prop*>(control->GetSection("sdl"))->Get_string("output")=="ttf") {
             autoexec[i++].Install("@config -set output=surface");
             autoexec[i++].Install("@config -set output=ttf");
         }
-#endif
-		if (addexit) autoexec[i++].Install("exit");
+//#endif /* (WIN32) && (USE_TTF) */
+#endif // 0
+        if (addexit) autoexec[i++].Install("exit");
 
 		assert(i <= 17); /* FIXME: autoexec[] should not be fixed size */
 
@@ -1762,15 +1783,15 @@ void SHELL_Init() {
     bool tiny_memory_mode = false;
 
     // below a certain memory size, alter memory arrangement and allocation to minimize memory
-    if (MEM_TotalPages() < 0x8) tiny_memory_mode = true;
+    if (MEM_ConventionalPages() < 0x8) tiny_memory_mode = true;
 
     // decide shell env size
     if (dosbox_shell_env_size == 0) {
-        if (MEM_TotalPages() >= 0x10/*64KB or more*/)
+        if (MEM_ConventionalPages() >= 0x10/*64KB or more*/)
             dosbox_shell_env_size = (0x158u - (0x118u + 19u)) << 4u; /* equivalent to DOSBox SVN */
-        else if (MEM_TotalPages() >= 0x8/*32KB or more*/)
+        else if (MEM_ConventionalPages() >= 0x8/*32KB or more*/)
             dosbox_shell_env_size = 384;
-        else if (MEM_TotalPages() >= 0x4/*16KB or more*/)
+        else if (MEM_ConventionalPages() >= 0x4/*16KB or more*/)
             dosbox_shell_env_size = 256;
         else
             dosbox_shell_env_size = 144;
@@ -1807,7 +1828,7 @@ void SHELL_Init() {
     total_sz = tmp;
 
     // Use normal MCB allocation unless memsize is 4KB
-    if (MEM_TotalPages() > 1) {
+    if (MEM_ConventionalPages() > 1) {
         if (!DOS_AllocateMemory(&psp_seg,&tmp)) E_Exit("COMMAND.COM failed to allocate main body + PSP segment");
     }
     else {

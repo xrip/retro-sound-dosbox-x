@@ -40,6 +40,27 @@
  *        FIFO anyway, and which cards have it? Would it also be possible to eliminate
  *        the need for sb.dma.min? */
 
+/* Notes:
+ *
+ *   - Windows 95, when using the Creative SB16 drivers, seems to always use a 62ms
+ *     DSP block size, DSP and DMA auto-init, within a 124ms buffer
+ *     (DSP block size 1376 / DMA base count 2751 / sample rate 22050 for example).
+ *
+ *     The calculation seems to be Nhalf = ((sample_rate / 16) & (~3)) * bytes_per_sample
+ *     and N = Nhalf * 2. It appears to round down to a multiple of 4 to correctly handle
+ *     up to 16-bit stereo, of course.
+ *
+ *     What I'm trying to investigate are the cases where something, like CD-ROM IDE
+ *     access, throws that off and causes audible popping and crackling.
+ *
+ *   - Windows 3.1 SB16: Holy Hell, do NOT attempt to play audio at 48KHz or higher!
+ *     There seems to be a serious bug with the Creative SB16 driver where 48KHz playback
+ *     results in garbled audio and soon a driver crash. 44.1KHz or lower is OK.
+ *     Is this some kind of DMA vs timing bug? It also appears to take whatever sample
+ *     rate is given by the Windows application and give it as-is to the DSP. The breaking
+ *     point seems to be 45,100Hz.
+ */
+
 #if defined(_MSC_VER)
 # pragma warning(disable:4244) /* const fmath::local::uint64_t to double possible loss of data */
 # pragma warning(disable:4305) /* truncation from double to float */
@@ -463,6 +484,9 @@ void sb_update_recording_source_settings() {
 
 static void DSP_DMA_CallBack(DmaChannel * chan, DMAEvent event) {
     if (chan!=sb.dma.chan || event==DMA_REACHED_TC) return;
+    else if (event==DMA_READ_COUNTER) {
+        sb.chan->FillUp();
+    }
     else if (event==DMA_MASKED) {
         if (sb.mode==MODE_DMA) {
             //Catch up to current time, but don't generate an IRQ!
@@ -483,13 +507,13 @@ static void DSP_DMA_CallBack(DmaChannel * chan, DMAEvent event) {
                 if (s) GenerateDMASound(s);
             }
             sb.mode = MODE_DMA_MASKED;
-            LOG(LOG_SB,LOG_NORMAL)("DMA masked, stopping %s, left %d",sb.dma.recording?"input":"output",chan->currcnt);
+            LOG(LOG_SB,LOG_NORMAL)("DMA masked, stopping %s, dsp left %d, dma left %d, by %s",sb.dma.recording?"input":"output",(unsigned int)sb.dma.left,chan->currcnt+1,DMAActorStr(chan->masked_by));
         }
     } else if (event==DMA_UNMASKED) {
         if (sb.mode==MODE_DMA_MASKED && sb.dma.mode!=DSP_DMA_NONE) {
             DSP_ChangeMode(MODE_DMA);
             CheckDMAEnd();
-            LOG(LOG_SB,LOG_NORMAL)("DMA unmasked, starting %s, auto %d block %d",sb.dma.recording?"input":"output",chan->autoinit,chan->basecnt);
+            LOG(LOG_SB,LOG_NORMAL)("DMA unmasked, starting %s, auto %d dma left %d, by %s dma init count %d",sb.dma.recording?"input":"output",chan->autoinit,chan->currcnt+1,DMAActorStr(chan->masked_by),chan->basecnt+1);
         }
     }
 }
@@ -1244,12 +1268,14 @@ static void DSP_DoDMATransfer(DMA_MODES mode,Bitu freq,bool stereo,bool dontInit
     }
 
 #if (C_DEBUG)
-    LOG(LOG_SB,LOG_NORMAL)("DMA Transfer:%s %s %s %s freq %d rate %d size %d gold %d",
+    LOG(LOG_SB,LOG_NORMAL)("DMA Transfer:%s %s %s dsp %s dma %s freq %d rate %d dspsize %d dmasize %d gold %d",
         type,
         sb.dma.recording ? "Recording" : "Playback",
         sb.dma.stereo ? "Stereo" : "Mono",
         sb.dma.autoinit ? "Auto-Init" : "Single-Cycle",
+        sb.dma.chan ? (sb.dma.chan->autoinit ? "Auto-Init" : "Single-Cycle") : "n/a",
         (int)freq,(int)sb.dma.rate,(int)sb.dma.total,
+        sb.dma.chan ? (sb.dma.chan->basecnt+1) : 0,
         (int)sb.dma_dac_mode
     );
 #else
@@ -3199,8 +3225,10 @@ static Bitu read_sb(Bitu port,Bitu /*iolen*/) {
             PIC_DeActivateIRQ(sb.hw.irq);
         }
 
-        if (sb.mode == MODE_DMA_REQUIRE_IRQ_ACK)
+        if (sb.mode == MODE_DMA_REQUIRE_IRQ_ACK) {
+            sb.chan->FillUp();
             sb.mode = MODE_DMA;
+        }
 
         extern const char* RunningProgram; // Wengier: Hack for Desert Strike & Jungle Strike
         if (!IS_PC98_ARCH && port>0x220 && port%0x10==0xE && !sb.dsp.out.used && (!strcmp(RunningProgram, "DESERT") || !strcmp(RunningProgram, "JUNGLE"))) {
@@ -3218,8 +3246,10 @@ static Bitu read_sb(Bitu port,Bitu /*iolen*/) {
                 PIC_DeActivateIRQ(sb.hw.irq);
             }
 
-            if (sb.mode == MODE_DMA_REQUIRE_IRQ_ACK)
+            if (sb.mode == MODE_DMA_REQUIRE_IRQ_ACK) {
+                sb.chan->FillUp();
                 sb.mode = MODE_DMA;
+            }
         }
         break;
     case DSP_WRITE_STATUS:
