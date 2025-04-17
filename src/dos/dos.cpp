@@ -1097,14 +1097,15 @@ static Bitu DOS_21Handler(void) {
         case 0x01:      /* Read character from STDIN, with echo */
             {   
                 uint8_t c;uint16_t n=1;
-                dos.echo=true;
+                if(dos.version.major == 1) dos.echo=true;
                 DOS_ReadFile(STDIN,&c,&n);
                 if (c == 3) {
                     DOS_BreakAction();
                     if (!DOS_BreakTest()) return CBRET_NONE;
                 }
                 reg_al=c;
-                dos.echo=false;
+                if(dos.version.major > 1) DOS_WriteFile(STDOUT, &c, &n); /* RBIL: Character may be redirected under DOS 2 + */
+                if(dos.version.major == 1) dos.echo=false;
             }
             break;
         case 0x02:      /* Write character to STDOUT */
@@ -1293,7 +1294,13 @@ static Bitu DOS_21Handler(void) {
                     }
                     if (read == free && c != 13) {      // Keyboard buffer full
                         uint8_t bell = 7;
+                        uint8_t page = real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_PAGE);
+                        uint8_t col = CURSOR_POS_COL(page);
+                        uint8_t row = CURSOR_POS_ROW(page);
+                        BIOS_NCOLS;
                         DOS_WriteFile(STDOUT, &bell, &n);
+                        if(CURSOR_POS_COL(page) > col)
+                            INT10_SetCursorPos(row, col, page); // stay where we were
                         continue;
                     }
                     DOS_WriteFile(STDOUT,&c,&n);

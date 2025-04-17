@@ -122,6 +122,8 @@ void getdrivezpath(std::string &path, std::string const& dirname), drivezRegiste
 std::string GetDOSBoxXPath(bool withexe=false);
 FILE *testLoadLangFile(const char *fname);
 bool CheckDBCSCP(int32_t codepage);
+void ReadCharAttr(uint16_t col,uint16_t row,uint8_t page,uint16_t * result);
+void WriteChar(uint16_t col,uint16_t row,uint8_t page,uint16_t chr,uint8_t attr,bool useattr);
 
 #define MAXU32 0xffffffff
 #include "zip.h"
@@ -133,6 +135,9 @@ bool CheckDBCSCP(int32_t codepage);
 #define INCL DOSFILEMGR
 #define INCL_DOSERRORS
 #include "os2.h"
+
+typedef char host_cnv_char_t;
+host_cnv_char_t *CodePageGuestToHost(const char *s);
 #endif
 
 #if defined(WIN32)
@@ -8240,16 +8245,7 @@ public:
     void Run(void) override;
 private:
 	void PrintUsage() {
-        constexpr const char *msg =
-           "Deletes a directory and all the subdirectories and files in it.\n\n"
-           "To delete one or more files and directories:\n"
-           "DELTREE [/Y] [drive:]path [[drive:]path[...]]\n\n"
-           "  /Y              Suppresses prompting to confirm you want to delete\n"
-           "                  the subdirectory.\n"
-           "  [drive:]path    Specifies the name of the directory you want to delete.\n\n"
-           "Note: Use DELTREE cautiously. Every file and subdirectory within the\n"
-           "specified directory will be deleted.\n";
-        WriteOut(msg);
+        WriteOut(MSG_Get("PROGRAM_DELTREE_HELP"));
 	}
 };
 
@@ -8278,12 +8274,7 @@ public:
     void Run(void) override;
 private:
 	void PrintUsage() {
-        constexpr const char *msg =
-           "Graphically displays the directory structure of a drive or path.\n\n"
-           "TREE [drive:][path] [/F] [/A]\n\n"
-           "  /F   Displays the names of the files in each directory.\n"
-           "  /A   Uses ASCII instead of extended characters.\n";
-        WriteOut(msg);
+        WriteOut(MSG_Get("PROGRAM_TREE_HELP"));
 	}
 };
 
@@ -8312,11 +8303,7 @@ public:
     void Run(void) override;
 private:
 	void PrintUsage() {
-        constexpr const char *msg =
-           "Sets the window title for the DOSBox-X window.\n\n"
-           "TITLE [string]\n\n"
-           "  string       Specifies the title for the DOSBox-X window.\n";
-        WriteOut(msg);
+        WriteOut(MSG_Get("PROGRAM_TITLE_HELP"));
 	}
 };
 
@@ -8570,33 +8557,23 @@ static void VHDMAKE_ProgramStart(Program * * make) {
     *make=new VHDMAKE;
 }
 
-class COLOR : public Program {
+static int8_t hexToInt(char hex) {
+    if (hex >= '0' && hex <= '9') return hex - '0';
+    if (hex >= 'A' && hex <= 'F') return hex - 'A' + 10;
+    if (hex >= 'a' && hex <= 'f') return hex - 'a' + 10;
+    return -1; // error 
+}
+
+class COLORPGM : public Program {
 public:
     void Run(void) override;
 private:
 	void PrintUsage() {
-        constexpr const char *msg =
-           "Sets the default console foreground and background colors.\n\n"
-           "COLOR [attr]\n\n"
-           "  attr        Specifies color attribute of console output\n\n"
-           "Color attributes are specified by TWO hex digits -- the first\n"
-           "corresponds to the background; the second to the foreground.\n"
-           "Each digit can be any of the following values:\n\n"
-           "    0 = Black       8 = Gray\n"
-           "    1 = Blue        9 = Light Blue\n"
-           "    2 = Green       A = Light Green\n"
-           "    3 = Aqua        B = Light Aqua\n"
-           "    4 = Red         C = Light Red\n"
-           "    5 = Purple      D = Light Purple\n"
-           "    6 = Yellow      E = Light Yellow\n"
-           "    7 = White       F = Bright White\n\n"
-           "If no argument is given, this command restores the original color.\n\n"
-           "Example: \"COLOR fc\" produces light red on bright white\n";
-        WriteOut(msg);
+        WriteOut(MSG_Get("PROGRAM_COLOR_HELP"));
 	}
 };
 
-void COLOR::Run()
+void COLORPGM::Run()
 {
 	// Hack To allow long commandlines
 	ChangeToLongCmd();
@@ -8614,54 +8591,105 @@ void COLOR::Run()
     if (strlen(args)==2) {
         bg=args[0];
         fg=args[1];
-        if (fg=='0'||fg=='8')
-            fgc=30;
-        else if (fg=='1'||fg=='9')
-            fgc=34;
-        else if (fg=='2'||tolower(fg)=='a')
-            fgc=32;
-        else if (fg=='3'||tolower(fg)=='b')
-            fgc=36;
-        else if (fg=='4'||tolower(fg)=='c')
-            fgc=31;
-        else if (fg=='5'||tolower(fg)=='d')
-            fgc=35;
-        else if (fg=='6'||tolower(fg)=='e')
-            fgc=32;
-        else if (fg=='7'||tolower(fg)=='f')
-            fgc=37;
-        else
+        if (fg == bg) {
             back=true;
-        if (bg=='0'||bg=='8')
-            bgc=40;
-        else if (bg=='1'||bg=='9')
-            bgc=44;
-        else if (bg=='2'||tolower(bg)=='a')
-            bgc=42;
-        else if (bg=='3'||tolower(bg)=='b')
-            bgc=46;
-        else if (bg=='4'||tolower(bg)=='c')
-            bgc=41;
-        else if (bg=='5'||tolower(bg)=='d')
-            bgc=45;
-        else if (bg=='6'||tolower(bg)=='e')
-            bgc=42;
-        else if (bg=='7'||tolower(bg)=='f')
-            bgc=47;
-        else
+            dos.return_code = 1; // foreground and background color is same
+        }
+        else {
+            if (fg=='0'||fg=='8')
+                fgc=30;
+            else if (fg=='1'||fg=='9')
+                fgc=34;
+            else if (fg=='2'||tolower(fg)=='a')
+                fgc=32;
+            else if (fg=='3'||tolower(fg)=='b')
+                fgc=36;
+            else if (fg=='4'||tolower(fg)=='c')
+                fgc=31;
+            else if (fg=='5'||tolower(fg)=='d')
+                fgc=35;
+            else if (fg=='6'||tolower(fg)=='e')
+                fgc=33;
+            else if (fg=='7'||tolower(fg)=='f')
+                fgc=37;
+            else
+                back=true;
+            if (bg=='0'||bg=='8')
+                bgc=40;
+            else if (bg=='1'||bg=='9')
+                bgc=44;
+            else if (bg=='2'||tolower(bg)=='a')
+                bgc=42;
+            else if (bg=='3'||tolower(bg)=='b')
+                bgc=46;
+            else if (bg=='4'||tolower(bg)=='c')
+                bgc=41;
+            else if (bg=='5'||tolower(bg)=='d')
+                bgc=45;
+            else if (bg=='6'||tolower(bg)=='e')
+                bgc=43;
+            else if (bg=='7'||tolower(bg)=='f')
+                bgc=47;
+            else
+                back=true;
+        }
+    }
+    else if(strlen(args)==1){ // Set background color to 0 if only one color is specified
+        fg=args[0];
+        bg='0';
+        bgc=40;
+        if (fg == '0') {
             back=true;
-    } else
+            dos.return_code = 1; // foreground and background color is same
+        }
+        else {
+            if(fg=='8')
+                fgc=30;
+            else if (fg=='1'||fg=='9')
+                fgc=34;
+            else if (fg=='2'||tolower(fg)=='a')
+                fgc=32;
+            else if (fg=='3'||tolower(fg)=='b')
+                fgc=36;
+            else if (fg=='4'||tolower(fg)=='c')
+                fgc=31;
+            else if (fg=='5'||tolower(fg)=='d')
+                fgc=35;
+            else if (fg=='6'||tolower(fg)=='e')
+                fgc=33;
+            else if (fg=='7'||tolower(fg)=='f')
+                fgc=37;
+            else
+                back=true;
+        }
+    }
+    else if (strlen(args)==0){ // default is white character on black background
+        bg='0';
+        bgc=40;
+        fg='7';
+        fgc=37;
+    }
+    else
        back=true;
-    if (back)
-        WriteOut("\033[0m");
-    else {
+    if (!back) {
         bool fgl=fg>='0'&&fg<='7', bgl=bg>='0'&&bg<='7';
         WriteOut(("\033["+std::string(fgl||bgl?"0;":"")+std::string(fgl?"":"1;")+std::string(bgl?"":"5;")+std::to_string(fgc)+";"+std::to_string(bgc)+"m").c_str());
+        uint8_t page = real_readb(BIOSMEM_SEG, BIOSMEM_CURRENT_PAGE);
+        BIOS_NCOLS; BIOS_NROWS;
+        uint8_t attr = hexToInt(bg) << 4 | hexToInt(fg);
+        for(uint32_t i=0; i < nrows; i++){
+            for(uint32_t j=0; j<ncols; j++){
+                uint16_t get_char;
+                ReadCharAttr(j, i, page, &get_char);
+                WriteChar(j, i, page, get_char & 0xFF, attr, true);
+            }
+        }
     }
+    else if(!dos.return_code) PrintUsage();
 }
 
 static void COLOR_ProgramStart(Program * * make) {
-    *make=new COLOR;
+    *make=new COLORPGM;
 }
 
 alt_rgb altBGR[16], altBGR0[16], *rgbcolors = (alt_rgb*)render.pal.rgb;
@@ -10175,6 +10203,25 @@ void DOS_SetupPrograms(void) {
         "The Dynamic VHD created is not partitioned nor formatted: to directly mount to\n"
         "a drive letter with \033[34;1mIMGMOUNT\033[0m, please consider using \033[34;1mIMGMAKE\033[0m instead.\n"
         "A merged snapshot VHD is automatically deleted if merge is successful.\n");
+	MSG_Add("PROGRAM_COLOR_HELP",
+           "Sets the default console foreground and background colors.\n\n"
+           "COLOR [attr]\n\n"
+           "  attr        Specifies color attribute of console output\n\n"
+           "Color attributes are specified by TWO hex digits -- the first\n"
+           "corresponds to the background; the second to the foreground.\n"
+           "Each digit can be any of the following values:\n\n"
+           "    0 = Black       8 = Gray\n"
+           "    1 = Blue        9 = Light Blue\n"
+           "    2 = Green       A = Light Green\n"
+           "    3 = Aqua        B = Light Aqua\n"
+           "    4 = Red         C = Light Red\n"
+           "    5 = Purple      D = Light Purple\n"
+           "    6 = Yellow      E = Light Yellow\n"
+           "    7 = White       F = Bright White\n\n"
+           "If no argument is given, this command restores the original color.\n\n"
+           "The COLOR command sets ERRORLEVEL to 1 if an attempt is made to execute\n"
+           "the COLOR command with a foreground and background color that are the same.\n\n"
+           "Example: \"COLOR fc\" produces light red on bright white\n");
     MSG_Add("PROGRAM_FLAGSAVE_UNFLAGALL","All files unflagged for saving.\n");
     MSG_Add("PROGRAM_FLAGSAVE_UNFLAGGED","File %s unflagged for saving.\n");
     MSG_Add("PROGRAM_FLAGSAVE_FLAGGED","File already flagged for saving - %s\n");
@@ -10202,6 +10249,24 @@ void DOS_SetupPrograms(void) {
     MSG_Add("PROGRAM_SET132x43","Changes to 132x43 text mode.\n");
     MSG_Add("PROGRAM_SET132x50","Changes to 132x50 text mode.\n");
     MSG_Add("PROGRAM_SET132x60","Changes to 132x60 text mode.\n");
+    MSG_Add("PROGRAM_DELTREE_HELP",
+           "Deletes a directory and all the subdirectories and files in it.\n\n"
+           "To delete one or more files and directories:\n"
+           "DELTREE [/Y] [drive:]path [[drive:]path[...]]\n\n"
+           "  /Y              Suppresses prompting to confirm you want to delete\n"
+           "                  the subdirectory.\n"
+           "  [drive:]path    Specifies the name of the directory you want to delete.\n\n"
+           "Note: Use DELTREE cautiously. Every file and subdirectory within the\n"
+           "specified directory will be deleted.\n");
+    MSG_Add("PROGRAM_TREE_HELP",
+           "Graphically displays the directory structure of a drive or path.\n\n"
+           "TREE [drive:][path] [/F] [/A]\n\n"
+           "  /F   Displays the names of the files in each directory.\n"
+           "  /A   Uses ASCII instead of extended characters.\n");
+    MSG_Add("PROGRAM_TITLE_HELP",
+           "Sets the window title for the DOSBox-X window.\n\n"
+           "TITLE [string]\n\n"
+           "  string       Specifies the title for the DOSBox-X window.\n");
     MSG_Add("PROGRAM_CFGTOOL_HELP",
             "Starts DOSBox-X's graphical configuration tool.\n\n"
             "CFGTOOL\n\n"
