@@ -2393,6 +2393,14 @@ bool isDBCSCP() {
     return !IS_PC98_ARCH && (IS_JEGA_ARCH||IS_DOSV||dos.loaded_codepage==932||dos.loaded_codepage==936||dos.loaded_codepage==949||dos.loaded_codepage==950||dos.loaded_codepage==951) && enable_dbcs_tables;
 }
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+    bool tfd_isDBCSCP(void) { return isDBCSCP(); }
+#ifdef __cplusplus
+}
+#endif
+
 #if 0//not used
 bool isDBCSLB(uint8_t chr) {
     for (int i=0; i<6; i++) lead[i] = 0;
@@ -5634,6 +5642,7 @@ void WriteARawImage(rawscreenshot &rawimg,rawscreenshot &rawpal,const char *ext)
 	png_destroy_write_struct(&png_ptr, &info_ptr);
 	/*close file*/
 	fclose(fp);
+    std::string message = formatString(MSG_Get("SAVE_SCREENSHOT"), pathscr.c_str());
 	if (show_recorded_filename && pathscr.size()) systemmessagebox("Recording completed",("Saved screenshot to the file:\n\n"+pathscr).c_str(),"ok", "info", 1);
 }
 #endif

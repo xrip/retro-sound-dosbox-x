@@ -1,5 +1,5 @@
 dnl Init.
-AC_INIT(dosbox-x,2025.02.01,[https://github.com/joncampbell123/dosbox-x/issues],[],[https://dosbox-x.com])
+AC_INIT(dosbox-x,2025.05.03,[https://github.com/joncampbell123/dosbox-x/issues],[],[https://dosbox-x.com])
 AC_PREREQ(2.60)
 AC_CONFIG_SRCDIR(README.md)
 
@@ -371,6 +371,7 @@ fi
 
 dnl Some needed libraries for OS2
 dnl perhaps join this with the other target depended checks. move them upwards
+AM_CONDITIONAL(OS2, test x$host = xi386-pc-os2-emx)
 if test x$host = xi386-pc-os2-emx ; then
     CXXFLAGS="$CXXFLAGS -DOS2 -march=pentium4 -idirafter /@unixroot/usr/include/os2tk45"
     CFLAGS="$CFLAGS -DOS2 -march=pentium4 -idirafter /@unixroot/usr/include/os2tk45"
@@ -576,6 +577,10 @@ case "$host" in
        AC_DEFINE(OS2, 1, [Compiling on OS/2 EMX])
        dnl FEATURE: Whether to support direct serial port pass-through
        AC_DEFINE(C_DIRECTSERIAL, 1, [ Define to 1 if you want serial pass-through support (Win32, Posix and OS/2).])
+       dnl If we have SDL2, we need to link the multimedia extensions.
+       if test "x$SDL2_LIBS" != "x"; then
+         LIBS="$LIBS -lmmpm2"
+       fi
        ;;
     *-*-riscos*)
        AC_DEFINE(RISCOS, 1, [Compiling on RISC OS])
