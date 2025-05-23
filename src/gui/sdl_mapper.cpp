@@ -52,6 +52,7 @@
 #include "render.h"
 #include "setup.h"
 #include "menu.h"
+#include "../ints/int10.h"
 
 #include "SDL_syswm.h"
 #include "sdlmain.h"
@@ -193,7 +194,6 @@ static DOSBoxMenu                               mapperMenu;
 #endif
 
 extern unsigned int                             hostkeyalt, maincp;
-extern uint8_t                                  int10_font_14[256 * 14];
 
 std::map<std::string,std::string>               pending_string_binds;
 
@@ -3749,7 +3749,6 @@ CEvent *get_mapper_event_by_name(const std::string &x) {
 
 unsigned char prvmc = 0;
 extern bool font_14_init, loadlang;
-extern uint8_t int10_font_14_init[256 * 14];
 uint8_t *GetDbcs14Font(Bitu code, bool &is14);
 bool isDBCSCP();
 static void DrawText(Bitu x,Bitu y,const char * text,uint8_t color,uint8_t bkcolor/*=CLR_BLACK*/) {
@@ -5482,8 +5481,12 @@ void MAPPER_RunInternal() {
 #endif
     std::string mapper_keybind = mapper_event_keybind_string("host");
     if (mapper_keybind.empty()) mapper_keybind = "unbound";
-    mainMenu.get_item("hostkey_mapper").check(hostkeyalt==0).set_text("Mapper-defined: "+mapper_keybind).refresh_item(mainMenu);
-
+#if __APPLE__ && __MAC_OS_X_VERSION_MIN_REQUIRED < 101300
+     /* Avoid conflict in check() macro */
+     mainMenu.get_item("hostkey_mapper").check2(hostkeyalt==0).set_text("Mapper-defined: "+mapper_keybind).refresh_item(mainMenu);
+#else
+     mainMenu.get_item("hostkey_mapper").check(hostkeyalt==0).set_text("Mapper-defined: "+mapper_keybind).refresh_item(mainMenu);
+#endif
 #if defined(USE_TTF)
     if (!TTF_using() || ttf.inUse)
 #endif

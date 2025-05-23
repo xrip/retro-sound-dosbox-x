@@ -40,6 +40,7 @@
 #include "midi.h"
 #include "bios_disk.h"
 #include "../dos/drives.h"
+#include "../ints/int10.h"
 
 #if C_OPENGL
 #include "voodoo.h"
@@ -85,8 +86,6 @@ public:
 protected:
     std::istringstream      lines;
 };
-
-extern uint8_t              int10_font_14[256 * 14], int10_font_14_init[256 * 14];
 
 extern uint32_t             GFX_Rmask;
 extern unsigned char        GFX_Rshift;
@@ -234,10 +233,6 @@ bool gui_menu_exit(DOSBoxMenu * const menu,DOSBoxMenu::item * const menuitem) {
     running = false;
     return true;
 }
-
-extern uint8_t int10_font_08[256 * 8];
-extern uint8_t int10_font_14[256 * 14];
-extern uint8_t int10_font_16[256 * 16];
 
 extern bool toscale;
 extern const char* RunningProgram;
@@ -1127,6 +1122,8 @@ std::string CapName(std::string name) {
         dispname="AUTOEXEC.BAT";
     else if (name=="sblaster")
         dispname="SB";
+    else if (name=="sblaster2")
+        dispname="SB #2";
     else if (name=="speaker")
         dispname="PC Speaker";
     else if (name=="imfc")
@@ -1184,6 +1181,8 @@ std::string RestoreName(std::string name) {
         dispname="autoexec";
     else if (name=="SB")
         dispname="sblaster";
+    else if (name=="SB #2")
+        dispname="sblaster2";
     else if (name=="PC Speaker")
         dispname="speaker";
     else if (name=="IMFC")
@@ -3272,7 +3271,7 @@ public:
                 "video", "voodoo", "vsync", "ttf",
                 "dos", "dosv", "pc98", "4dos",
                 "autoexec", "config", "cpu", "speaker",
-                "sblaster", "gus", "midi", "mixer",
+                "sblaster", "sblaster2", "gus", "midi", "mixer",
                 "innova", "imfc", "joystick", "mapper",
                 "keyboard", "serial", "parallel", "printer",
                 "ipx", "ne2000", "ethernet, pcap", "ethernet, slirp",
